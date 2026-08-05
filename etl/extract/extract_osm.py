@@ -66,19 +66,36 @@ TIMEOUT_OVERPASS = 300  # segundos que damos al servidor para resolver la consul
 TIMEOUT_HTTP = 360      # algo mayor, para no cortar antes que el propio servidor
 
 
-def construir_query(iso_code: str, tipos: list[str]) -> str:
-    """Genera la consulta Overpass QL para una CCAA y una lista de tourism=*."""
-    filtro = "|".join(tipos)
+def construir_query_filtros(iso_code: str, filtros: list[str]) -> str:
+    """
+    Genera la consulta Overpass QL para una CCAA a partir de filtros de etiqueta ya
+    formateados, p. ej. `["amenity"~"^(restaurant|cafe|bar)$"]`.
+
+    Cada filtro se consulta sobre node, way y relation. `out center` devuelve el centroide
+    de los polígonos, sin el cual los way y relation se quedarían sin coordenadas.
+
+    Base común a todas las capas del proyecto (alojamiento, restauración, atracciones,
+    transporte), para que todas hereden la misma selección territorial por ISO 3166-2.
+    """
+    bloques = []
+    for f in filtros:
+        for tipo in ("node", "way", "relation"):
+            bloques.append(f"  {tipo}{f}(area.ccaa);")
+    cuerpo = "\n".join(bloques)
+
     return f"""
 [out:json][timeout:{TIMEOUT_OVERPASS}];
 area["ISO3166-2"="{iso_code}"][admin_level=4]->.ccaa;
 (
-  node["tourism"~"^({filtro})$"](area.ccaa);
-  way["tourism"~"^({filtro})$"](area.ccaa);
-  relation["tourism"~"^({filtro})$"](area.ccaa);
+{cuerpo}
 );
 out center tags;
 """.strip()
+
+
+def construir_query(iso_code: str, tipos: list[str]) -> str:
+    """Consulta de alojamientos turísticos (tourism=hotel|hostel|apartment|guest_house)."""
+    return construir_query_filtros(iso_code, [f'["tourism"~"^({"|".join(tipos)})$"]'])
 
 
 def consultar_overpass(query: str, reintentos: int = 3, permitir_vacio: bool = False) -> dict:
@@ -158,15 +175,39 @@ def consultar_overpass(query: str, reintentos: int = 3, permitir_vacio: bool = F
     raise RuntimeError(f"No se pudo completar la consulta Overpass. Último error: {ultimo_error}")
 
 
-def resumen_por_tipo(elementos: list[dict]) -> dict[str, int]:
+def resumen_por_clave(elementos: list[dict], claves: tuple[str, ...] = ("tourism",)) -> dict[str, int]:
+    """
+    Cuenta elementos por el valor de la primera etiqueta presente de `claves`.
+
+    Las capas usan claves distintas (tourism, amenity, railway...), así que la categoría se
+    busca en orden y se etiqueta como `clave=valor` cuando hay más de una posible.
+    """
     conteo: dict[str, int] = {}
     for el in elementos:
-        tipo = el.get("tags", {}).get("tourism", "desconocido")
-        conteo[tipo] = conteo.get(tipo, 0) + 1
+        tags = el.get("tags", {})
+        etiqueta = "desconocido"
+        for clave in claves:
+            if clave in tags:
+                etiqueta = f"{clave}={tags[clave]}" if len(claves) > 1 else tags[clave]
+                break
+        conteo[etiqueta] = conteo.get(etiqueta, 0) + 1
     return dict(sorted(conteo.items(), key=lambda kv: kv[1], reverse=True))
 
 
-def guardar_raw(datos: dict, slug: str, iso_code: str, nombre: str, tipos: list[str]) -> Path:
+def resumen_por_tipo(elementos: list[dict]) -> dict[str, int]:
+    """Recuento por tourism=*, para la capa de alojamientos."""
+    return resumen_por_clave(elementos, ("tourism",))
+
+
+def guardar_raw(
+    datos: dict,
+    slug: str,
+    iso_code: str,
+    nombre: str,
+    tipos: list[str],
+    prefijo: str = "alojamientos",
+    claves_resumen: tuple[str, ...] = ("tourism",),
+) -> Path:
     """Guarda la respuesta cruda junto a metadatos de trazabilidad."""
     RAW_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -175,6 +216,7 @@ def guardar_raw(datos: dict, slug: str, iso_code: str, nombre: str, tipos: list[
 
     salida = {
         "metadata": {
+            "capa": prefijo,
             "ccaa_slug": slug,
             "ccaa_nombre": nombre,
             "iso3166_2": iso_code,
@@ -182,12 +224,12 @@ def guardar_raw(datos: dict, slug: str, iso_code: str, nombre: str, tipos: list[
             "fecha_extraccion": ahora.isoformat(),
             "fuente_dato": "openstreetmap-overpass",
             "num_elementos": len(elementos),
-            "resumen_por_tipo": resumen_por_tipo(elementos),
+            "resumen_por_tipo": resumen_por_clave(elementos, claves_resumen),
         },
         "osm": datos,
     }
 
-    fichero = RAW_DIR / f"osm_alojamientos_{slug}_{ahora:%Y%m%d}.json"
+    fichero = RAW_DIR / f"osm_{prefijo}_{slug}_{ahora:%Y%m%d}.json"
     with fichero.open("w", encoding="utf-8") as f:
         json.dump(salida, f, ensure_ascii=False, indent=2)
 

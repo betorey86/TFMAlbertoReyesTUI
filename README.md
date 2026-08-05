@@ -26,10 +26,15 @@ tfm-tui-dashboard/
 │   └── processed/      # Datos limpios y listos para cargar en la BD (no versionados)
 ├── etl/
 │   ├── extract/
-│   │   ├── extract_osm.py            # OSM: una CCAA
-│   │   ├── extract_osm_batch.py      # OSM: toda España + consolidado
-│   │   └── extract_vut_oficial.py    # Registros oficiales de VUT por CCAA
-│   ├── transform/      # Limpieza, normalización y enriquecimiento geográfico
+│   │   ├── extract_osm.py                # OSM alojamientos: una CCAA
+│   │   ├── extract_osm_batch.py          # OSM alojamientos: toda España
+│   │   ├── _capa_osm.py                  # Base común de las capas temáticas
+│   │   ├── extract_osm_restauracion.py   # Restaurantes, cafeterías, bares
+│   │   ├── extract_osm_atracciones.py    # Atracciones, museos, monumentos, miradores
+│   │   ├── extract_osm_transporte.py     # Estaciones y nodos de transporte
+│   │   └── extract_vut_oficial.py        # Registros oficiales de VUT
+│   ├── transform/
+│   │   └── geocode_direcciones.py    # Geocodificación con Nominatim
 │   └── load/
 │       ├── db.py                 # Conexión a Railway (DATABASE_URL + SQLAlchemy)
 │       └── init_db.py            # Habilita PostGIS y aplica db/schema.sql
@@ -248,6 +253,45 @@ apartamentos.
 Conclusión operativa: OSM sirve como **capa geográfica base**, pero el denominador de "oferta"
 para los indicadores de saturación tiene que venir de los registros oficiales autonómicos de
 VUT. Ver la sección siguiente.
+
+## Capas temáticas de OSM
+
+Además de alojamiento, tres capas más, todas parametrizadas por CCAA con la misma mecánica
+(ISO 3166-2, rotación de réplicas, reintentos ante respuesta vacía o con `remark`,
+`out center`). La lógica común está en `_capa_osm.py`.
+
+```bash
+python etl/extract/extract_osm_restauracion.py --ccaa baleares
+python etl/extract/extract_osm_atracciones.py  --ccaa baleares
+python etl/extract/extract_osm_transporte.py   --ccaa baleares
+python etl/extract/extract_osm_transporte.py   --ccaa baleares --perfil completo
+```
+
+Salida: `data/raw/osm_<capa>_<ccaa>_<fecha>.json`, mismo formato que la de alojamientos.
+
+### Prueba en Baleares (05/08/2026)
+
+| Capa | Elementos | Desglose |
+|---|---:|---|
+| Restauración | 6.070 | restaurant 3.571 · cafe 1.715 · bar 784 |
+| Atracciones | 1.053 | viewpoint 695 · attraction 181 · museum 103 · monument 72 |
+| Transporte (principales) | 91 | railway=station 36 · ferry_terminal 28 · bus_station 20 · halt 6 |
+| Transporte (completo) | 3.009 | platform 2.631 · stop_position 187 · railway=stop 68 · … |
+
+**Sobre el perfil de transporte.** El perfil `completo` multiplica por 33 el volumen, y el
+87 % de lo que añade son `public_transport=platform`: marquesinas y andenes individuales. Para
+comparar la accesibilidad *entre* destinos eso es ruido — lo que importa es dónde hay nodos de
+entrada (estaciones, intercambiadores), no cuántas paradas tiene una avenida. El perfil
+`principales` es el que debe usarse para el dashboard; `completo` sólo tiene sentido si en
+algún momento se hace análisis intraurbano de cobertura.
+
+Un hallazgo del perfil `principales`: aparecen 28 **terminales de ferry**, que entran por
+`public_transport=station`. En un archipiélago son la puerta de entrada principal al destino,
+así que conviene tratarlas explícitamente y no como un residuo de la consulta.
+
+**Sobre restauración.** En España el bar de barrio y el restaurante turístico comparten
+etiqueta. Esta capa mide densidad de hostelería en general, no oferta orientada al visitante:
+sirve para comparar densidad relativa entre zonas, no como medida de especialización turística.
 
 ## Segunda fuente: registros oficiales de VUT
 
