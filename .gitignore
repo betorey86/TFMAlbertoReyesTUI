@@ -1,0 +1,28 @@
+# Entorno / secretos
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Datos (pueden ser grandes; se regeneran con el ETL)
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Docker
+pgdata/
+
+# IDE / SO
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

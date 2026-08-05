@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(python --version)",
+      "PowerShell(docker --version)",
+      "PowerShell(python \"C:\\\\Users\\\\atdre\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-atdre-tfm-tui-dashboard\\\\8c742128-5e07-418a-9010-f2f37cf84235\\\\scratchpad\\\\diag.py\")",
+      "WebSearch",
+      "WebFetch(domain:juntadeandalucia.es)",
+      "WebFetch(domain:datos.juntadeandalucia.es)",
+      "WebFetch(domain:www.turisme.gva.es)",
+      "PowerShell(python \"C:\\\\Users\\\\atdre\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-atdre-tfm-tui-dashboard\\\\8c742128-5e07-418a-9010-f2f37cf84235\\\\scratchpad\\\\probe.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\atdre\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-atdre-tfm-tui-dashboard\\\\8c742128-5e07-418a-9010-f2f37cf84235\\\\scratchpad\\\\probe2.py\")",
+      "PowerShell(python -m pip install --quiet geopandas openpyxl 2>&1)",
+      "PowerShell(python -c \"import geopandas; print\\('geopandas', geopandas.__version__\\)\")",
+      "WebFetch(domain:datos.gob.es)",
+      "PowerShell(python \"C:\\\\Users\\\\atdre\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-atdre-tfm-tui-dashboard\\\\8c742128-5e07-418a-9010-f2f37cf84235\\\\scratchpad\\\\probe3.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\atdre\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-atdre-tfm-tui-dashboard\\\\8c742128-5e07-418a-9010-f2f37cf84235\\\\scratchpad\\\\probe4.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\atdre\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-atdre-tfm-tui-dashboard\\\\8c742128-5e07-418a-9010-f2f37cf84235\\\\scratchpad\\\\campos.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\atdre\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-atdre-tfm-tui-dashboard\\\\8c742128-5e07-418a-9010-f2f37cf84235\\\\scratchpad\\\\campos2.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\atdre\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-atdre-tfm-tui-dashboard\\\\8c742128-5e07-418a-9010-f2f37cf84235\\\\scratchpad\\\\campos3.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\atdre\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-atdre-tfm-tui-dashboard\\\\8c742128-5e07-418a-9010-f2f37cf84235\\\\scratchpad\\\\and_search.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\atdre\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-atdre-tfm-tui-dashboard\\\\8c742128-5e07-418a-9010-f2f37cf84235\\\\scratchpad\\\\can_coord.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\atdre\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-atdre-tfm-tui-dashboard\\\\8c742128-5e07-418a-9010-f2f37cf84235\\\\scratchpad\\\\and_dbg.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\atdre\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-atdre-tfm-tui-dashboard\\\\8c742128-5e07-418a-9010-f2f37cf84235\\\\scratchpad\\\\bal_dbg.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\atdre\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-atdre-tfm-tui-dashboard\\\\8c742128-5e07-418a-9010-f2f37cf84235\\\\scratchpad\\\\val_vut.py\")"
+    ]
+  }
+}
