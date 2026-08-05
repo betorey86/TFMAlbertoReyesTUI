@@ -489,30 +489,50 @@ def fuente_pais_vasco() -> Resultado:
 # 7. Comunitat Valenciana — NO AUTOMATIZABLE
 # ---------------------------------------------------------------------------
 
-NOTA_VALENCIA = """\
-El portal de datos abiertos de Turisme GVA no publica un fichero descargable ni una API
-para las viviendas turísticas. La página es un formulario WordPress cuyos campos (`form
-class="vivienda-data-form" action="#!"`) se resuelven en cliente con JavaScript
-(recursosFormManager.js) y generan el PDF/CSV en el navegador; no hay ningún endpoint
-HTTP que devuelva el listado completo.
-
-Descarga manual:
-  1. Abrir https://www.turisme.gva.es/datosabiertos/recursos-turisticos/viviendas-turisticas/
-  2. Dejar los filtros vacíos para obtener el listado completo.
-  3. Elegir formato CSV y pulsar "DESCARGAR LISTADO".
-  4. Guardar el fichero como data/raw/vut_oficial_valencia.csv
-
-Una vez descargado a mano, se puede añadir aquí una función `fuente_valencia()` que lo lea
-del disco y lo normalice, sin necesidad de red.
-"""
+URL_VALENCIA = (
+    "https://dadesobertes.gva.es/dataset/758f8f8e-c5af-4622-b268-a6c591710a51/"
+    "resource/b1bdc28e-9813-422a-ab7a-63c21290493d/download/lista-de-viviendas-turisticas.csv"
+)
 
 
 def fuente_valencia() -> Resultado:
-    """Fuente no automatizable: se documenta el procedimiento manual en vez de scrapear."""
-    return Resultado(
-        "valencia", "Comunitat Valenciana", "CCAA completa", "pendiente",
-        nota="Sin API ni fichero descargable; formulario JS. Requiere descarga manual.",
-    )
+    """
+    Registro de viviendas turísticas de la Comunitat Valenciana.
+
+    El fichero está en el portal general de datos abiertos de la GVA
+    (dadesobertes.gva.es), no en el de Turisme GVA que enlaza a un formulario web sin
+    endpoint descargable. Ver la nota del README sobre ese portal.
+
+    No trae coordenadas, pero sí `ref_catastral`, que permite una geocodificación mucho
+    más precisa vía el servicio del Catastro que la que daría Nominatim sobre la dirección.
+    """
+    res = Resultado("valencia", "Comunitat Valenciana", "CCAA completa", "error",
+                    nota="Portal de datos abiertos de la GVA (dadesobertes.gva.es).")
+
+    r = descargar(URL_VALENCIA)
+    res.fichero_raw = guardar_raw_bytes(r.content, res.slug, "csv")
+
+    df = pd.read_csv(io.BytesIO(r.content), sep=";", low_memory=False)
+    res.campos_origen = list(df.columns)
+
+    norm = pd.DataFrame({
+        "id_fuente": df.get("signatura"),
+        "nombre": df.get("nombre"),
+        "lat": pd.NA,
+        "lon": pd.NA,
+        "direccion": df.get("direccion"),
+        "ccaa": "Comunitat Valenciana",
+        "provincia": df.get("provincia"),
+        "municipio": df.get("municipio"),
+        "plazas": a_numero(df.get("plazas_totales")),
+        "fecha_registro": df.get("fecha_alta"),
+        "fuente": "Generalitat Valenciana - Registro de viviendas turísticas",
+    })
+
+    guardar(norm, res)
+    res.nota += " Sin coordenadas en origen; incluye referencia catastral para geocodificar."
+    res.estado = "ok"
+    return res
 
 
 # ---------------------------------------------------------------------------

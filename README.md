@@ -274,17 +274,18 @@ a partir de la dirección postal.
 
 ### Resultado (04/08/2026)
 
-**274.705 registros** de 6 de las 7 fuentes, en 3,6 min.
+**364.683 registros** de las 7 fuentes.
 
 | Fuente | Ámbito | Registros | Con coord. | % |
 |---|---|---:|---:|---:|
 | Andalucía (OpenRTA) | CCAA completa | 168.796 | 159.880 | 94,7 % |
+| Comunitat Valenciana (GVA) | CCAA completa | 89.978 | 0 | 0 % |
 | Canarias (Registro General Turístico) | CCAA completa | 72.645 | 48.606 | 66,9 % |
 | Mallorca (Consell de Mallorca) | Sólo Mallorca | 16.854 | 8.909 | 52,9 % |
 | Barcelona (Open Data BCN) | Sólo ciudad | 10.627 | 10.627 | 100 % |
 | País Vasco (REATE) | CCAA completa | 4.786 | 0 | 0 % |
 | Madrid (Geoportal) | Sólo ciudad | 997 | 997 | 100 % |
-| **TOTAL** | | **274.705** | **229.019** | **83,4 %** |
+| **TOTAL** | | **364.683** | **229.019** | **62,8 %** |
 
 Comprobado sobre los normalizados: el esquema es idéntico en las 6 fuentes, el flag
 `necesita_geocodificacion` es coherente con la presencia de coordenadas, y el 99,99 % de los
@@ -292,19 +293,56 @@ puntos cae dentro de su comunidad (24 registros de Andalucía y Canarias están 
 geocodificados **en origen** — direcciones de Estepona o Yaiza con coordenadas en Madrid o
 Barcelona).
 
-### Pendiente de gestión manual
+### Comunitat Valenciana: portal equivocado
 
-**Comunitat Valenciana** — el portal de Turisme GVA no publica fichero descargable ni API.
-La página es un formulario WordPress (`form class="vivienda-data-form" action="#!"`) que se
-resuelve en cliente con JavaScript y genera el CSV/PDF en el navegador; no hay ningún
-endpoint HTTP que devuelva el listado. Procedimiento manual:
+El registro **sí es descargable**, pero no desde el portal de Turisme GVA
+(`turisme.gva.es/datosabiertos`) que es el que aparece al buscar. Está en el portal general
+de datos abiertos de la Generalitat:
 
-1. Abrir <https://www.turisme.gva.es/datosabiertos/recursos-turisticos/viviendas-turisticas/>
-2. Dejar los filtros vacíos para obtener el listado completo.
-3. Elegir formato CSV y pulsar "DESCARGAR LISTADO".
-4. Guardar como `data/raw/vut_oficial_valencia.csv`.
+```
+https://dadesobertes.gva.es/dataset/tur-gestur-vt
+```
 
-Hecho eso, se puede añadir una `fuente_valencia()` que lo lea de disco y lo normalice.
+Merece la pena dejar constancia de por qué el otro portal no sirve, porque parece una fuente
+válida y no lo es:
+
+- La página de viviendas turísticas es un formulario WordPress (`action="#!"`) resuelto en
+  cliente por `recursosFormManager.js`.
+- Sus desplegables se rellenan llamando a `http://desajava03.turisme.gva.es:8080/datosabiertos/…`,
+  un host **interno de desarrollo** que no resuelve desde fuera. En producción los filtros de
+  provincia y municipio llegan vacíos ("Todas"/"Todos").
+- Aunque funcionara, su único tipo es "Bloques y conjuntos de viviendas turísticas": bloques
+  y complejos, no el registro de viviendas individuales.
+
+El fichero de `dadesobertes.gva.es` sí es el registro completo: 89.978 viviendas. No trae
+coordenadas, pero incluye `ref_catastral`, que permite geocodificar contra el servicio del
+Catastro con mucha más precisión que Nominatim sobre la dirección postal.
+
+### Galicia: descargable, pero con datos personales
+
+El **Sistema de Intelixencia Turística de Galicia** (`aei.turismo.gal`) no es sólo un visor:
+publica el directorio del REAT en CSV descargable sin autenticación.
+
+```
+https://descargascdn.xunta.gal/interno/smarxa/reat_directorio-alojamientos_esp.csv
+```
+
+(El dataset equivalente en `abertos.xunta.gal` devuelve HTML, no el fichero.)
+
+Contiene 12.281 viviendas de uso turístico, con `longitud`/`latitud` incluidas. **No está
+integrado todavía en `extract_vut_oficial.py`**, por dos motivos que conviene resolver antes:
+
+1. **El fichero mezcla dos esquemas.** Las primeras 20.451 filas siguen la cabecera declarada
+   (18 campos). A partir de la línea 20456 hay 12.279 filas con 38 campos y otro esquema, que
+   son justamente las VUT. Cualquier lector de CSV falla ahí.
+2. **Ese segundo bloque incluye datos personales.** Nombre y apellidos del titular y su
+   DNI/NIF: 10.790 de las 12.281 filas contienen un patrón de DNI. Son personas físicas.
+
+Lo segundo no es un detalle técnico. El dashboard no necesita titular ni NIF —le bastan
+ubicación, plazas y municipio— así que la integración debe leer sólo las columnas necesarias
+y **no escribir nunca los campos personales a disco**. Volcarlos a la base de datos o a un
+panel sería un problema de protección de datos evitable, y conviene decidirlo de forma
+explícita antes de tocar esta fuente.
 
 ### Avisos sobre estas fuentes
 
