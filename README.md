@@ -410,6 +410,66 @@ Los registros **no son homogéneos entre sí** y no deben agregarse sin más:
   reintentos. La variante `format=csv` está mal formada (pipes sin escapar en texto libre),
   por eso se usa el JSON.
 
+## Geocodificación
+
+Varios registros oficiales publican dirección postal pero no coordenadas.
+[geocode_direcciones.py](etl/transform/geocode_direcciones.py) las resuelve con Nominatim.
+
+```bash
+python etl/transform/geocode_direcciones.py --fuente pais_vasco
+python etl/transform/geocode_direcciones.py --fuente pais_vasco --limite 50   # prueba
+python etl/transform/geocode_direcciones.py --fuente pais_vasco --solo-resumen
+```
+
+Salida: `data/processed/vut_<fuente>_geocodificado.csv`.
+Caché: `data/processed/geocache/geocache_<fuente>.jsonl`.
+
+**Política de uso.** Nominatim permite 1 petición por segundo y exige User-Agent
+identificable; el script respeta ambas cosas (se puede fijar `NOMINATIM_USER_AGENT` en
+`.env`). Es un servicio gratuito mantenido por donaciones: para volúmenes mayores —Valencia
+tiene 89.978 registros sin coordenadas— lo correcto es levantar una instancia propia o usar
+un servicio de pago, **no** acelerar este script.
+
+La caché se escribe con `fsync` línea a línea, así que el proceso es reanudable: si se corta,
+la siguiente ejecución continúa donde iba.
+
+### Criterio de confianza
+
+`geocoding_confianza` compara el municipio devuelto por Nominatim con el del registro oficial:
+
+- **alta** — coinciden. Sólo en este caso se rellenan `lat`/`lon`.
+- **baja** — hay coordenadas pero el municipio no coincide. Se conservan en
+  `lat_geocod`/`lon_geocod` para revisión, pero no se dan por buenas: un punto en el
+  municipio equivocado falsea el cálculo de densidad.
+- **nula** — Nominatim no encontró nada.
+
+### Resultado: País Vasco (05/08/2026)
+
+| | Registros | % |
+|---|---:|---:|
+| Geocodificados | 4.090 | 85,5 % |
+| — confianza alta | 4.053 | 84,7 % |
+| — confianza baja | 37 | 0,8 % |
+| Sin resultado | 696 | 14,5 % |
+
+7,3 h a 1 petición/s. Comprobado: los 4.053 puntos de confianza alta caen dentro del País
+Vasco, y el reparto es coherente con la realidad turística (Donostia 1.131, Bilbao 925,
+Bermeo 181).
+
+**Limpieza de direcciones.** Sin ella el acierto era del 47 %. El censo vasco pega la mano al
+número (`Solokoetxe, 6IZ`), deja la puerta como componente suelto (`, B IZ`), abrevia el tipo
+de vía (`Pl. Santiago`) y escribe los genéricos en las dos lenguas
+(`Zumardia/Alameda Mazarredo`). Corrigiendo eso y probando variantes en cascada —dirección
+completa, forma castellana, sin genérico, sin número— sube al 85 %.
+
+No se usa el municipio a secas como último recurso: devolvería el centroide del pueblo para
+todas sus viviendas, que es precisión falsa y desplazaría los cálculos de densidad.
+
+El 14,5 % restante son sobre todo barrios rurales dispersos que OSM no tiene cartografiados
+con ese nombre. Para esos, la vía razonable es el Catastro, no insistir con Nominatim.
+(Nota menor: 5 de los 37 de baja confianza lo son porque Nominatim no devolvió campo de
+municipio, no porque discrepe.)
+
 ## Modelo de datos
 
 Tabla `establecimientos_turisticos`: identidad de la fuente (`fuente_dato` + `id_fuente`, con
