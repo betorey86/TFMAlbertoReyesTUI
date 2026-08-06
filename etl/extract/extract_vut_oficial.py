@@ -536,6 +536,152 @@ def fuente_valencia() -> Resultado:
 
 
 # ---------------------------------------------------------------------------
+# 8. Galicia — REAT (contiene datos personales que se descartan al leer)
+# ---------------------------------------------------------------------------
+
+URL_GALICIA = "https://descargascdn.xunta.gal/interno/smarxa/reat_directorio-alojamientos_esp.csv"
+
+TIPOS_VUT_GALICIA = {"VIVIENDAS USO TURÍSTICO", "VIVIENDAS TURÍSTICAS"}
+
+# El fichero publicado concatena dos bloques con esquemas distintos:
+#
+#   Bloque A (20.451 filas, 18 campos)  Sigue la cabecera declarada. Bien formado y SIN
+#                                       datos personales. Contiene 16.186 VUT de las cuatro
+#                                       provincias.
+#   Bloque B (12.279 filas, 38 campos)  Esquema no declarado, sólo Pontevedra, sin
+#                                       coordenadas, y CON nombre y DNI del titular más su
+#                                       domicilio particular. Sus 12.279 signaturas no
+#                                       aparecen en el bloque A, así que no es redundante.
+#
+# Del bloque B se leen exclusivamente las posiciones no personales listadas abajo. Las
+# posiciones 17 (titular), 19 (DNI) y 20-23 (domicilio particular del titular) no se leen,
+# no se copian a ninguna estructura y no llegan a disco ni a los logs.
+GALICIA_B = {
+    "signatura": 0,
+    "tipo": 3,
+    "plazas": 11,
+    "fecha_alta": 14,
+    "expediente": 16,
+    "direccion": 31,
+    "codigo_postal": 34,
+    "municipio": 35,
+    "provincia": 36,
+}
+GALICIA_B_CAMPOS_PERSONALES = (17, 19, 20, 21, 22, 23)
+
+
+def _galicia_filas_limpias(texto: str) -> tuple[list[dict], dict[str, int]]:
+    """
+    Devuelve las filas de VUT ya despojadas de campos personales.
+
+    Nunca construye un registro que contenga titular ni DNI: los índices personales del
+    bloque B simplemente no se leen.
+    """
+    import csv
+
+    lineas = texto.splitlines()
+    cabecera = next(csv.reader([lineas[5]], delimiter=";"))
+    idx_a = {n: i for i, n in enumerate(cabecera)}
+
+    filas: list[dict] = []
+    stats = {"bloque_a": 0, "bloque_b": 0, "descartadas": 0}
+
+    for linea in lineas[6:]:
+        ancha = linea.count(";") + 1 > 20
+        try:
+            campos = next(csv.reader([linea], delimiter=";", escapechar="\\" if ancha else None))
+        except (csv.Error, StopIteration):
+            stats["descartadas"] += 1
+            continue
+
+        if not ancha:
+            if len(campos) != len(cabecera) or campos[idx_a["tipo"]] not in TIPOS_VUT_GALICIA:
+                continue
+            filas.append({
+                "signatura": campos[idx_a["signatura"]],
+                "tipo": campos[idx_a["tipo"]],
+                "plazas": campos[idx_a["plazas"]],
+                "fecha_alta": "",  # el bloque A no publica fecha de inscripción
+                "direccion": campos[idx_a["direccion"]],
+                "municipio": campos[idx_a["municipio"]],
+                "provincia": campos[idx_a["provincia"]],
+                "lat": campos[idx_a["latitud"]],
+                "lon": campos[idx_a["longitud"]],
+                "bloque": "A",
+            })
+            stats["bloque_a"] += 1
+        else:
+            if len(campos) != 38 or campos[GALICIA_B["tipo"]] not in TIPOS_VUT_GALICIA:
+                stats["descartadas"] += 1
+                continue
+            # Sólo posiciones no personales. Ver GALICIA_B_CAMPOS_PERSONALES.
+            filas.append({
+                "signatura": campos[GALICIA_B["signatura"]],
+                "tipo": campos[GALICIA_B["tipo"]],
+                "plazas": campos[GALICIA_B["plazas"]],
+                "fecha_alta": campos[GALICIA_B["fecha_alta"]].strip(' "'),
+                "direccion": campos[GALICIA_B["direccion"]].strip(' "'),
+                "municipio": campos[GALICIA_B["municipio"]].strip(' "'),
+                "provincia": campos[GALICIA_B["provincia"]].strip(' "'),
+                "lat": "",
+                "lon": "",
+                "bloque": "B",
+            })
+            stats["bloque_b"] += 1
+
+    return filas, stats
+
+
+def fuente_galicia() -> Resultado:
+    """
+    Registro de Empresas e Actividades Turísticas (REAT) de la Xunta.
+
+    Esta fuente publica datos personales de titulares particulares. Se descartan en el
+    momento de la lectura: el fichero original no se guarda, y lo que se escribe en
+    data/raw/ es ya la versión depurada. Ver la nota del README.
+    """
+    res = Resultado("galicia", "Galicia", "CCAA completa", "error",
+                    nota="REAT (Xunta de Galicia) vía aei.turismo.gal.")
+
+    r = descargar(URL_GALICIA)
+    filas, stats = _galicia_filas_limpias(r.content.decode("utf-8"))
+    del r  # el contenido original, con los campos personales, no sobrevive a esta función
+
+    df = pd.DataFrame(filas)
+    res.campos_origen = list(df.columns)
+
+    # El crudo guardado es ya el depurado: guardar el original metería DNIs en data/raw/.
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
+    destino_raw = RAW_DIR / f"vut_oficial_{res.slug}.csv"
+    df.to_csv(destino_raw, index=False, encoding="utf-8")
+    res.fichero_raw = destino_raw
+
+    norm = pd.DataFrame({
+        "id_fuente": df["signatura"],
+        # La denominación comercial de una VUT suele ser el nombre del propietario, así que
+        # tampoco se conserva.
+        "nombre": pd.NA,
+        "lat": a_numero(df["lat"]),
+        "lon": a_numero(df["lon"]),
+        "direccion": df["direccion"],
+        "ccaa": "Galicia",
+        "provincia": df["provincia"],
+        "municipio": df["municipio"],
+        "plazas": a_numero(df["plazas"]),
+        "fecha_registro": df["fecha_alta"].replace("", pd.NA),
+        "fuente": "REAT - Xunta de Galicia",
+    })
+
+    guardar(norm, res)
+    res.nota += (f" Bloque bien formado: {stats['bloque_a']:,}; bloque con datos personales: "
+                 f"{stats['bloque_b']:,} (campos de titular y DNI descartados en la lectura).")
+    if stats["descartadas"]:
+        res.nota += f" {stats['descartadas']} filas ilegibles descartadas."
+    res.estado = "ok"
+    return res
+
+
+# ---------------------------------------------------------------------------
 # Orquestación
 # ---------------------------------------------------------------------------
 
@@ -547,6 +693,7 @@ FUENTES = {
     "madrid": fuente_madrid,
     "pais_vasco": fuente_pais_vasco,
     "valencia": fuente_valencia,
+    "galicia": fuente_galicia,
 }
 
 

@@ -275,7 +275,7 @@ Salida: `data/raw/osm_<capa>_<ccaa>_<fecha>.json`, mismo formato que la de aloja
 |---|---:|---|
 | Restauración | 6.070 | restaurant 3.571 · cafe 1.715 · bar 784 |
 | Atracciones | 1.053 | viewpoint 695 · attraction 181 · museum 103 · monument 72 |
-| Transporte (principales) | 91 | railway=station 36 · ferry_terminal 28 · bus_station 20 · halt 6 |
+| Transporte (principales) | 116 | ferry_terminal 42 · railway=station 36 · bus_station 20 · **aerodrome 11** · halt 6 |
 | Transporte (completo) | 3.009 | platform 2.631 · stop_position 187 · railway=stop 68 · … |
 
 **Sobre el perfil de transporte.** El perfil `completo` multiplica por 33 el volumen, y el
@@ -285,9 +285,28 @@ entrada (estaciones, intercambiadores), no cuántas paradas tiene una avenida. E
 `principales` es el que debe usarse para el dashboard; `completo` sólo tiene sentido si en
 algún momento se hace análisis intraurbano de cobertura.
 
-Un hallazgo del perfil `principales`: aparecen 28 **terminales de ferry**, que entran por
-`public_transport=station`. En un archipiélago son la puerta de entrada principal al destino,
-así que conviene tratarlas explícitamente y no como un residuo de la consulta.
+**Puertas de entrada al destino.** El perfil `principales` consulta explícitamente
+`aeroway=aerodrome` y `amenity=ferry_terminal`, y los cuenta antes que el resto. En Canarias y
+Baleares el aeropuerto y el puerto *son* el acceso al destino, muy por encima del ferrocarril:
+en Baleares hay 42 terminales de ferry y 11 aeródromos frente a 36 estaciones de tren. Las
+terminales aparecían ya de rebote vía `public_transport=station`, pero pedirlas de forma
+explícita añade 14 más, porque no todos los puertos llevan esa etiqueta.
+
+### Escalado a España
+
+```bash
+python etl/extract/extract_osm_capas_batch.py
+python etl/extract/extract_osm_capas_batch.py --solo-prioritarias
+python etl/extract/extract_osm_capas_batch.py --capas restauracion --pausa 30
+```
+
+Recorre las tres capas CCAA a CCAA con pausa entre consultas, empezando por las **seis
+comunidades con registro oficial de VUT** (Baleares, Canarias, Cataluña, Andalucía, Madrid y
+C. Valenciana), que son donde más aporta cruzar todas las capas con la oferta de alojamiento.
+
+Es reanudable: cada unidad (capa × CCAA) va a su propio JSON y queda anotada en
+`data/raw/capas_progreso.json`. Al relanzarlo, lo ya extraído se salta y sólo se reintenta lo
+que falló.
 
 **Sobre restauración.** En España el bar de barrio y el restaurante turístico comparten
 etiqueta. Esta capa mide densidad de hostelería en general, no oferta orientada al visitante:
@@ -318,18 +337,24 @@ a partir de la dirección postal.
 
 ### Resultado (04/08/2026)
 
-**364.683 registros** de las 7 fuentes.
+**393.148 registros** de las 8 fuentes.
 
 | Fuente | Ámbito | Registros | Con coord. | % |
 |---|---|---:|---:|---:|
 | Andalucía (OpenRTA) | CCAA completa | 168.796 | 159.880 | 94,7 % |
 | Comunitat Valenciana (GVA) | CCAA completa | 89.978 | 0 | 0 % |
 | Canarias (Registro General Turístico) | CCAA completa | 72.645 | 48.606 | 66,9 % |
+| Galicia (REAT) | CCAA completa | 28.465 | 212 | 0,7 % |
 | Mallorca (Consell de Mallorca) | Sólo Mallorca | 16.854 | 8.909 | 52,9 % |
 | Barcelona (Open Data BCN) | Sólo ciudad | 10.627 | 10.627 | 100 % |
-| País Vasco (REATE) | CCAA completa | 4.786 | 0 | 0 % |
+| País Vasco (REATE) | CCAA completa | 4.786 | 4.053¹ | 84,7 % |
 | Madrid (Geoportal) | Sólo ciudad | 997 | 997 | 100 % |
-| **TOTAL** | | **364.683** | **229.019** | **62,8 %** |
+| **TOTAL** | | **393.148** | **233.284** | **59,3 %** |
+
+¹ Tras geocodificar; en origen no traía ninguna. Ver la sección de geocodificación.
+
+Pendiente de geocodificar: 89.978 de Valencia y 28.253 de Galicia. Ambas fuentes publican
+referencias que permiten hacerlo mejor que con Nominatim — Valencia trae `ref_catastral`.
 
 Comprobado sobre los normalizados: el esquema es idéntico en las 6 fuentes, el flag
 `necesita_geocodificacion` es coherente con la presencia de coordenadas, y el 99,99 % de los
@@ -362,7 +387,7 @@ El fichero de `dadesobertes.gva.es` sí es el registro completo: 89.978 vivienda
 coordenadas, pero incluye `ref_catastral`, que permite geocodificar contra el servicio del
 Catastro con mucha más precisión que Nominatim sobre la dirección postal.
 
-### Galicia: descargable, pero con datos personales
+### Galicia: tratamiento de datos personales en origen
 
 El **Sistema de Intelixencia Turística de Galicia** (`aei.turismo.gal`) no es sólo un visor:
 publica el directorio del REAT en CSV descargable sin autenticación.
@@ -373,20 +398,47 @@ https://descargascdn.xunta.gal/interno/smarxa/reat_directorio-alojamientos_esp.c
 
 (El dataset equivalente en `abertos.xunta.gal` devuelve HTML, no el fichero.)
 
-Contiene 12.281 viviendas de uso turístico, con `longitud`/`latitud` incluidas. **No está
-integrado todavía en `extract_vut_oficial.py`**, por dos motivos que conviene resolver antes:
+**El fichero publicado concatena dos bloques con esquemas distintos**, lo que hace fallar a
+cualquier lector de CSV a partir de la línea 20456:
 
-1. **El fichero mezcla dos esquemas.** Las primeras 20.451 filas siguen la cabecera declarada
-   (18 campos). A partir de la línea 20456 hay 12.279 filas con 38 campos y otro esquema, que
-   son justamente las VUT. Cualquier lector de CSV falla ahí.
-2. **Ese segundo bloque incluye datos personales.** Nombre y apellidos del titular y su
-   DNI/NIF: 10.790 de las 12.281 filas contienen un patrón de DNI. Son personas físicas.
+| | Filas | Campos | Coordenadas | Datos personales |
+|---|---:|---:|---|---|
+| Bloque A | 20.451 | 18 (cabecera declarada) | sí, pero sólo en 212 VUT | no |
+| Bloque B | 12.279 | 38 (no declarados) | no | **sí** |
 
-Lo segundo no es un detalle técnico. El dashboard no necesita titular ni NIF —le bastan
-ubicación, plazas y municipio— así que la integración debe leer sólo las columnas necesarias
-y **no escribir nunca los campos personales a disco**. Volcarlos a la base de datos o a un
-panel sería un problema de protección de datos evitable, y conviene decidirlo de forma
-explícita antes de tocar esta fuente.
+De ahí salen 28.465 VUT: 16.186 del bloque A (las cuatro provincias) y 12.279 del bloque B
+(sólo Pontevedra, con signaturas que no aparecen en A, así que no son duplicados).
+
+#### Los datos personales y cómo se excluyen
+
+El bloque B incluye, para cada vivienda, **nombre y apellidos del titular, su DNI/NIF y su
+domicilio particular**. Son personas físicas: 10.790 de las 12.279 filas contienen un patrón
+de DNI. El domicilio del titular además no coincide con el de la vivienda en 4.752 casos, de
+modo que es un dato de la persona, no del inmueble.
+
+El dashboard no necesita nada de eso. `fuente_galicia()` en
+[extract_vut_oficial.py](etl/extract/extract_vut_oficial.py) aplica **minimización de datos**:
+
+- Del bloque B se leen **sólo** las posiciones no personales: signatura, tipo, plazas, fecha
+  de alta, dirección del establecimiento, código postal, municipio y provincia. Las
+  posiciones 17 (titular), 19 (DNI) y 20-23 (domicilio particular) **no se leen**, no se
+  copian a ninguna estructura intermedia y no llegan a disco ni a los logs.
+- El fichero original **no se guarda**. A diferencia del resto de fuentes, lo que se escribe
+  en `data/raw/vut_oficial_galicia.csv` es ya la versión depurada, porque conservar el crudo
+  significaría tener DNIs en el repositorio de datos.
+- Tampoco se conserva la **denominación comercial**: en una VUT suele ser el nombre del
+  propietario ("PILAR VILAR MACEIRA"), así que `nombre` queda vacío para esta fuente.
+
+Verificado tras la extracción: 0 coincidencias de patrón DNI o NIE en
+`vut_oficial_galicia.csv`, `vut_normalizado_galicia.csv` y `vut_informe_fuentes.json`.
+
+> **Para la memoria del TFM.** Merece la pena declararlo como criterio metodológico: que un
+> organismo publique un dato como abierto no convierte su tratamiento posterior en lícito ni
+> necesario. El principio de minimización del RGPD (art. 5.1.c) obliga a recoger sólo lo
+> adecuado y limitado a la finalidad. Un análisis de densidad territorial de oferta turística
+> se resuelve con ubicación, plazas y municipio; el titular y su DNI no aportan nada al
+> indicador y sí crean un riesgo evitable. El filtrado se hace en la lectura, no después,
+> para que el dato personal no llegue a existir dentro del proyecto en ningún momento.
 
 ### Avisos sobre estas fuentes
 

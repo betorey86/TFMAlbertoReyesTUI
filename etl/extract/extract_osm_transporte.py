@@ -9,8 +9,13 @@ de autobuses, intercambiadores), no cuántas marquesinas tiene una avenida.
 Por eso hay dos perfiles:
 
   principales (por defecto)
-      railway=station, railway=halt, amenity=bus_station, public_transport=station.
-      Estaciones e intercambiadores. Es lo que debería usarse para accesibilidad.
+      Puertas de entrada al destino: aeropuertos, terminales de ferry, estaciones de tren
+      y de autobuses e intercambiadores. Es lo que debería usarse para accesibilidad.
+
+      Aeropuertos y ferris van primero a propósito: en Canarias y Baleares el aeropuerto y
+      el puerto *son* el acceso al destino, muy por encima del ferrocarril. Las terminales
+      de ferry aparecían ya de rebote (vía public_transport=station); ahora se piden
+      explícitamente para no depender de cómo esté etiquetado cada puerto.
 
   completo
       Añade public_transport=stop_position y highway=bus_stop. Multiplica el volumen por
@@ -32,6 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _capa_osm import Capa, ejecutar
 
 FILTROS_PRINCIPALES = [
+    '["aeroway"="aerodrome"]',
+    '["amenity"="ferry_terminal"]',
     '["railway"~"^(station|halt)$"]',
     '["amenity"="bus_station"]',
     '["public_transport"="station"]',
@@ -48,7 +55,9 @@ CAPA = Capa(
         ],
     },
     perfil_por_defecto="principales",
-    claves_resumen=("railway", "amenity", "public_transport", "highway"),
+    # Orden deliberado: un aeropuerto suele llevar también aeroway y public_transport, y
+    # queremos que cuente como aeropuerto, no como parada.
+    claves_resumen=("aeroway", "railway", "amenity", "public_transport", "highway"),
 )
 
 
