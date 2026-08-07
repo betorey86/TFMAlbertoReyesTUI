@@ -308,6 +308,37 @@ Es reanudable: cada unidad (capa × CCAA) va a su propio JSON y queda anotada en
 `data/raw/capas_progreso.json`. Al relanzarlo, lo ya extraído se salta y sólo se reintenta lo
 que falló.
 
+#### Resultado: España completa (07/08/2026)
+
+57/57 unidades. **145.251 elementos** en 6 h 21 min. Una unidad
+(transporte/Cantabria) falló por respuesta degradada de Overpass y se resolvió relanzando.
+
+| Comunidad autónoma | Atracciones | Restauración | Transporte |
+|---|---:|---:|---:|
+| Cataluña | 4.529 | 18.341 | 739 |
+| Andalucía | 4.398 | 17.324 | 556 |
+| Castilla y León | 3.314 | 7.682 | 354 |
+| Canarias | 2.397 | 7.764 | 154 |
+| Comunitat Valenciana | 2.006 | 11.218 | 376 |
+| Galicia | 1.917 | 7.404 | 214 |
+| Aragón | 1.706 | 3.279 | 230 |
+| Castilla-La Mancha | 1.442 | 2.867 | 168 |
+| Comunidad de Madrid | 1.271 | 12.073 | 509 |
+| Illes Balears | 1.053 | 6.070 | 116 |
+| País Vasco | 930 | 6.401 | 323 |
+| Principado de Asturias | 808 | 3.570 | 175 |
+| Extremadura | 805 | 2.048 | 113 |
+| Cantabria | 653 | 1.833 | 144 |
+| Región de Murcia | 624 | 1.962 | 69 |
+| Navarra | 536 | 1.561 | 41 |
+| La Rioja | 249 | 753 | 33 |
+| Melilla | 40 | 36 | 5 |
+| Ceuta | 16 | 49 | 3 |
+| **TOTAL** | **28.694** | **112.235** | **4.322** |
+
+Desglose de transporte: 2.056 estaciones de tren, 770 estaciones de autobuses, 415 apeaderos,
+399 `public_transport=station`, **364 aeródromos** y **247 terminales de ferry**.
+
 **Sobre restauración.** En España el bar de barrio y el restaurante turístico comparten
 etiqueta. Esta capa mide densidad de hostelería en general, no oferta orientada al visitante:
 sirve para comparar densidad relativa entre zonas, no como medida de especialización turística.
@@ -521,6 +552,74 @@ El 14,5 % restante son sobre todo barrios rurales dispersos que OSM no tiene car
 con ese nombre. Para esos, la vía razonable es el Catastro, no insistir con Nominatim.
 (Nota menor: 5 de los 37 de baja confianza lo son porque Nominatim no devolvió campo de
 municipio, no porque discrepe.)
+
+## Geocodificación por Catastro
+
+Nominatim no escala a los volúmenes pendientes: 118.231 registros a 1 petición/s serían 33
+horas de un servicio gratuito mantenido por donaciones. El Catastro permite además una
+precisión mayor cuando hay referencia catastral, porque devuelve la parcela en vez de
+interpretar una dirección postal.
+
+Servicio: `OVCCoordenadas.asmx / Consulta_CPMRC` (referencia → coordenadas) y
+`OVCCallejero.asmx / ConsultaMunicipio, ConsultaVia, Consulta_DNPLOC` (dirección →
+referencia). Nota: `Consulta_DNPRC` está en OVCCallejero y devuelve datos descriptivos, no
+geometría; el método que da coordenadas es `Consulta_CPMRC`.
+
+Se pide `SRS=EPSG:4326` y el servicio responde ya en ese sistema, así que normalmente no hace
+falta reproyectar. Aun así se comprueba el SRS devuelto y, si llegara en ETRS89 geográfico
+(EPSG:4258) o en una zona UTM, se convierte con **pyproj** antes de guardar nada: una
+coordenada UTM interpretada como grados acabaría en el golfo de Guinea.
+
+### Valencia, por referencia catastral
+
+```bash
+python etl/transform/geocode_catastro_valencia.py --muestra 200   # validación previa
+python etl/transform/geocode_catastro_valencia.py
+```
+
+El registro valenciano trae `ref_catastral` en 89.201 de sus 89.978 registros (99,1 %).
+
+Dos detalles que condicionan el proceso:
+
+- La referencia del registro tiene **20 caracteres** (14 de parcela + 4 de cargo + 2 de
+  control) y `Consulta_CPMRC` exige las 14 de parcela; con 20 responde *"LA REFERENCIA
+  CATASTRAL DEBE SER DE 14 POSICIONES"*. Se trunca, y el resultado es el centroide de la
+  parcela: la máxima precisión alcanzable para un piso concreto.
+- Truncar tiene un efecto colateral muy favorable: **35.070 parcelas únicas** para 89.201
+  registros. Deduplicar ahorra el 61 % de las consultas, porque muchas VUT comparten edificio.
+
+Validación con 200 parcelas: **100 % resueltas**, y el domicilio devuelto por el Catastro
+coincide con el municipio del registro en el **100 %** de los 879 registros que cubrían.
+
+> El contraste de municipio exige normalizar el artículo: el registro escribe `ATZÚBIA, L'` y
+> el Catastro `L'ATZUBIA`. Comparados en crudo daban un 97 % engañoso, con 26 falsos negativos
+> que eran el mismo municipio.
+
+### Galicia, por dirección (piloto)
+
+```bash
+python etl/transform/geocode_catastro_galicia_piloto.py --muestra 300
+```
+
+Galicia no publica referencia catastral, así que hay que ir por dirección, en cuatro pasos:
+`ConsultaMunicipio` (casar el nombre: el registro dice `O CAMPO LAMEIRO` y el Catastro
+`CAMPO LAMEIRO`) → `ConsultaVia` (el registro dice `LUGAR DO PAZO` y el Catastro lo guarda
+como `LG PAZO`) → `Consulta_DNPLOC` → `Consulta_CPMRC`.
+
+**Resultado del piloto (300 direcciones, semilla 42): 45,0 %.** Por debajo del umbral del
+50 %, así que el lote completo **no se ha lanzado**. Motivos de fallo:
+
+| Motivo | % de la muestra |
+|---|---:|
+| `EL NUMERO NO EXISTE` (la vía existe, el portal no) | 26,7 % |
+| Vía no encontrada o ambigua | 26,0 % |
+| Vía encontrada pero la dirección no trae portal | 1,3 % |
+| No se pudo extraer nombre de vía | 0,7 % |
+
+El problema es la naturaleza de las direcciones gallegas, no el servicio: buena parte son
+topónimos rurales sin vía ni número (`LUGAR DE PEREIRIÑA`, `HURRAQUIÑA`, `LG. SEÑORANS S/N`).
+El Catastro indexa por vía y portal, y ahí no hay ni una cosa ni la otra. Extrapolado, el lote
+completo serían 13 h para geocodificar menos de la mitad.
 
 ## Modelo de datos
 
