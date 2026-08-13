@@ -40,6 +40,19 @@ SALIDA = PROCESSED_DIR / "vut_galicia_municipal.csv"
 # concellos más grandes.
 ARTICULOS = {"a", "o", "as", "os", "el", "la", "los", "las", "lo"}
 
+ENTRADA_MUNICIPIOS = PROCESSED_DIR / "municipios_ine.csv"
+
+# Concellos que el REAT nombra con una denominación alternativa o histórica y que por eso
+# no casan con el INE ni normalizando el nombre. Los códigos están verificados contra
+# `municipios_ine.csv`. Son sólo tres, pero uno de ellos —Cangas— concentra 651 VUT en la
+# costa de las Rías Baixas, justo el perfil que más pesa en el análisis de saturación:
+# dejarlo sin cruzar lo borraría del mapa sin que nada fallara.
+EQUIVALENCIAS_INE = {
+    "CANGAS DE MORRAZO": "36008",    # INE: Cangas (Pontevedra)
+    "O CASTRO DE CALDELAS": "32023",  # INE: Castro Caldelas (Ourense)
+    "ALFOZ DO CASTRODOURO": "27002",  # INE: Alfoz (Lugo)
+}
+
 
 def normalizar(texto: object) -> str:
     if texto is None or (isinstance(texto, float) and pd.isna(texto)):
@@ -94,10 +107,11 @@ def agregar(df: pd.DataFrame) -> pd.DataFrame:
     ]
     agrupado["resolucion_espacial"] = "municipal"
     agrupado["fuente"] = "REAT - Xunta de Galicia"
+    agrupado["origen_agregacion"] = "municipal_directo"
 
-    # Columnas a rellenar cuando se incorpore el INE. Se dejan creadas para que el esquema
-    # del cruce esté fijado desde ya.
+    # Lo rellena resolver_codigo_ine(); se crea aquí para fijar el orden de columnas.
     agrupado["codigo_ine"] = pd.NA
+    # A rellenar cuando se incorpore la población del INE.
     agrupado["poblacion"] = pd.NA
     agrupado["plazas_por_1000_hab"] = pd.NA
 
@@ -106,11 +120,79 @@ def agregar(df: pd.DataFrame) -> pd.DataFrame:
         "n_vut", "n_con_plazas", "pct_con_plazas",
         "plazas_total", "plazas_estimadas", "plazas_media", "plazas_mediana",
         "poblacion", "plazas_por_1000_hab",
-        "resolucion_espacial", "fuente",
+        "resolucion_espacial", "origen_agregacion", "fuente",
     ]
     agrupado = agrupado[columnas].sort_values("n_vut", ascending=False)
     agrupado.attrs["sin_municipio"] = sin_municipio
     return agrupado
+
+
+def resolver_codigo_ine(agrupado: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """
+    Asigna el código INE a cada concello y añade los que no tienen ninguna VUT.
+
+    Dos pasos: primero las equivalencias explícitas de denominación alternativa, y luego
+    el cruce por nombre normalizado. Los concellos que el INE tiene y el registro no
+    aparecen con `n_vut = 0` y `origen_agregacion = 'municipal_directo'`: sabemos que no
+    tienen VUT registradas, así que es un cero real y no un hueco de cobertura.
+    """
+    municipios = pd.read_csv(ENTRADA_MUNICIPIOS, dtype={"codigo_ine": str})
+    gal = municipios[municipios["ccaa"] == "Galicia"].copy()
+    gal["k"] = gal["nombre_municipio"].map(
+        lambda n: " ".join(p for p in normalizar(n).split() if p not in ARTICULOS)
+    )
+    por_nombre = dict(zip(gal["k"], gal["codigo_ine"]))
+
+    codigos, via = [], []
+    for municipio in agrupado["municipio"]:
+        explicito = EQUIVALENCIAS_INE.get(str(municipio).strip().upper())
+        if explicito:
+            codigos.append(explicito)
+            via.append("equivalencia")
+            continue
+        clave = " ".join(p for p in normalizar(municipio).split() if p not in ARTICULOS)
+        codigos.append(por_nombre.get(clave))
+        via.append("nombre" if clave in por_nombre else "sin_resolver")
+
+    agrupado = agrupado.copy()
+    agrupado["codigo_ine"] = codigos
+
+    stats = {
+        "con_vut": len(agrupado),
+        "resueltos": int(pd.Series(codigos).notna().sum()),
+        "por_equivalencia": via.count("equivalencia"),
+        "sin_resolver": [
+            m for m, v in zip(agrupado["municipio"], via) if v == "sin_resolver"
+        ],
+    }
+
+    # Concellos del INE sin ninguna VUT registrada: cero real.
+    presentes = set(c for c in codigos if c)
+    faltan = gal[~gal["codigo_ine"].isin(presentes)]
+    if len(faltan):
+        ceros = pd.DataFrame({
+            "ccaa": "Galicia",
+            "provincia": faltan["provincia"].values,
+            "municipio": faltan["nombre_municipio"].values,
+            "clave_join": [clave_join(m, p) for m, p in
+                           zip(faltan["nombre_municipio"], faltan["provincia"])],
+            "codigo_ine": faltan["codigo_ine"].values,
+            "n_vut": 0, "n_con_plazas": 0, "pct_con_plazas": 0.0,
+            "plazas_total": 0.0, "plazas_estimadas": 0.0,
+            # float("nan") y no pd.NA: en columnas numéricas todo-NA, pd.NA hace que
+            # concat avise de un cambio futuro en la inferencia de tipos.
+            "plazas_media": float("nan"), "plazas_mediana": float("nan"),
+            "poblacion": float("nan"), "plazas_por_1000_hab": float("nan"),
+            "resolucion_espacial": "municipal",
+            "origen_agregacion": "municipal_directo",
+            "fuente": "REAT - Xunta de Galicia",
+        })
+        agrupado = pd.concat([agrupado, ceros], ignore_index=True)
+
+    stats["sin_vut"] = len(faltan)
+    stats["total"] = len(agrupado)
+    stats["municipios_ine_galicia"] = len(gal)
+    return agrupado.sort_values("n_vut", ascending=False), stats
 
 
 def main() -> int:
@@ -131,6 +213,14 @@ def main() -> int:
     agrupado = agregar(df)
     sin_municipio = agrupado.attrs.get("sin_municipio", 0)
 
+    stats = {}
+    if ENTRADA_MUNICIPIOS.exists():
+        agrupado, stats = resolver_codigo_ine(agrupado)
+    else:
+        print(f"  AVISO: falta {ENTRADA_MUNICIPIOS.name}; no se resuelve el código INE.",
+              file=sys.stderr)
+        print("  Ejecuta antes: python etl/extract/extract_ine_municipios.py", file=sys.stderr)
+
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     agrupado.to_csv(SALIDA, index=False, encoding="utf-8")
 
@@ -150,6 +240,19 @@ def main() -> int:
           f"(cobertura {cobertura:.1f} %)")
     print(f"  Plazas estimadas:          {total_est:>8,}  "
           f"(completando las no declaradas con la media del concello)")
+
+    if stats:
+        print("\n  Cruce con el código INE:")
+        print(f"    Concellos con VUT:       {stats['con_vut']:>8,}")
+        print(f"    Resueltos:               {stats['resueltos']:>8,}  "
+              f"({stats['por_equivalencia']} por equivalencia de denominación)")
+        if stats["sin_resolver"]:
+            print(f"    SIN RESOLVER:            {len(stats['sin_resolver']):>8,}  "
+                  f"{stats['sin_resolver'][:5]}")
+        print(f"    Concellos sin VUT:       {stats['sin_vut']:>8,}  "
+              f"(cargados como cero real)")
+        print(f"    Total de filas:          {stats['total']:>8,}  "
+              f"de {stats['municipios_ine_galicia']:,} concellos del INE")
 
     print("\n  Concellos con más VUT:")
     for _, f in agrupado.head(10).iterrows():
