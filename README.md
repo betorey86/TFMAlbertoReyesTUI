@@ -32,6 +32,7 @@ tfm-tui-dashboard/
 │   │   ├── extract_osm_restauracion.py   # Restaurantes, cafeterías, bares
 │   │   ├── extract_osm_atracciones.py    # Atracciones, museos, monumentos, miradores
 │   │   ├── extract_osm_transporte.py     # Estaciones y nodos de transporte
+│   │   ├── extract_osm_camping.py        # Campings y áreas de autocaravana
 │   │   └── extract_vut_oficial.py        # Registros oficiales de VUT
 │   ├── transform/
 │   │   └── geocode_direcciones.py    # Geocodificación con Nominatim
@@ -291,6 +292,56 @@ Baleares el aeropuerto y el puerto *son* el acceso al destino, muy por encima de
 en Baleares hay 42 terminales de ferry y 11 aeródromos frente a 36 estaciones de tren. Las
 terminales aparecían ya de rebote vía `public_transport=station`, pero pedirlas de forma
 explícita añade 14 más, porque no todos los puertos llevan esa etiqueta.
+
+### Camping y áreas de autocaravana
+
+```bash
+python etl/extract/extract_osm_camping.py --ccaa baleares
+```
+
+Es oferta de alojamiento, no una categoría aparte: `tourism=camp_site` y
+`tourism=caravan_site` entran como dos valores más del campo `tipo` (`camping` y
+`area_autocaravana`), con `tipo_establecimiento = alojamiento` para la carga posterior.
+A diferencia de las otras capas temáticas, esta se normaliza también al esquema común:
+
+- `data/raw/osm_camping_<ccaa>_<fecha>.json`
+- `data/processed/camping_normalizado_<ccaa>.csv`
+
+Además de los campos comunes captura, cuando OSM los trae, los atributos propios del
+segmento: `plazas` (capacity), plazas por tipo, si admite tiendas/caravanas/autocaravanas,
+agua potable, electricidad, vaciado de aguas, aseos y duchas. Ninguno es obligatorio: si la
+etiqueta no existe, el campo queda vacío. Se distingue "no consta" de "no admite", para que
+un camping sin etiquetar no aparezca como que prohíbe caravanas.
+
+#### Prueba en Baleares (13/08/2026)
+
+**24 elementos**: 14 campings y 10 áreas de autocaravana. Todos con coordenadas.
+
+La cobertura de atributos es el problema, no el volumen:
+
+| Atributo | Cobertura |
+|---|---:|
+| nombre | 50 % |
+| horario | 25 % |
+| de_pago / web / teléfono | 17 % |
+| aseos, duchas, operador, municipio | 13 % |
+| **plazas** | **4 %** (1 de 24) |
+| plazas por tipo, agua potable, vaciado | 0 % |
+
+Dos avisos antes de escalar esta capa:
+
+- **La mitad no tiene ni nombre ni operador.** Las 10 áreas de autocaravana son todas
+  anónimas, y tres de ellas están a menos de 200 m entre sí cerca de Alcúdia: puede ser una
+  misma área mapeada por partes, o plazas sueltas. Sin nombre no hay forma de verificarlo ni
+  de deduplicar.
+- **`camp_site` mezcla oferta comercial con acampada libre.** Entre los 14 hay zonas de
+  acampada públicas y campamentos ("Zona d'acampada s'Arenalet", "Campament de la Victòria"),
+  que no son plazas de mercado. Por eso se capturan `fee`, `operator`, `backcountry` e
+  `impromptu`: permiten separar lo comercial de lo que no lo es. En Baleares sólo 4 de 24
+  declaran `fee`.
+
+Con `plazas` al 4 %, esta capa sirve para **contar establecimientos**, no para medir
+capacidad. Para plazas haría falta el registro oficial autonómico, igual que con las VUT.
 
 ### Escalado a España
 
@@ -711,3 +762,10 @@ limitación metodológica declarada.
    Ibiza y Formentera, y las CCAA aún no cubiertas.
 7. Incorporar indicadores de demanda y población (INE) para construir los ratios de saturación.
 8. `dashboard/app.py`: mapa coroplético e indicadores en Streamlit.
+
+### Trabajo futuro (fuera del alcance actual)
+
+- **Rutas de senderismo** (`route=hiking`). Son geometrías lineales, no puntos: no encajan
+  en el esquema de `establecimientos_turisticos` ni en el cálculo de densidad por punto, y
+  requerirían su propia tabla y su propio tratamiento espacial. Son un recurso secundario
+  frente a lo que queda pendiente, así que se dejan anotadas y sin implementar.
