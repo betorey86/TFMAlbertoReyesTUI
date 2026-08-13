@@ -42,7 +42,8 @@ tfm-tui-dashboard/
 ├── db/
 │   └── schema.sql      # Esquema de la base de datos
 ├── dashboard/
-│   └── app.py          # Aplicación Streamlit (pendiente)
+│   ├── app_preliminar.py   # Visor de inventario (implementado)
+│   └── app.py              # Dashboard analítico (pendiente)
 ├── notebooks/          # Exploración y validación de datos
 ├── docs/               # Memoria del TFM, diagramas, notas metodológicas
 ├── .env                # DATABASE_URL de Railway (no versionado)
@@ -744,6 +745,43 @@ direcciones, para poder comparar dirección a dirección.
 Cuando ambos resuelven coinciden bien: mediana de 38 m, p90 de 229 m, y el 68 % a menos de
 100 m. Son geocodificadores complementarios —Cartociudad aporta 36 direcciones que el
 Catastro no resuelve—, pero ni sumándolos se llega al 60 %.
+
+## Visor preliminar de inventario
+
+```bash
+streamlit run dashboard/app_preliminar.py
+```
+
+**No es el dashboard analítico.** Es una herramienta de control para ver sobre el mapa qué
+se ha extraído y dónde están los huecos. No calcula ningún indicador de saturación ni de
+oportunidad: con una cobertura tan desigual entre territorios, cualquier comparación directa
+sería engañosa.
+
+Lee directamente de `data/processed/` y `data/raw/`, sin base de datos. Si falta un fichero o
+un proceso de extracción sigue corriendo, esa capa no aparece y se avisa en pantalla en vez
+de fallar.
+
+Incluye: métricas de cobertura por capa (total, geolocalizados, porcentaje), filtros por
+capa / CCAA / tipo, y una tabla que rotula el nivel de cobertura de cada territorio.
+
+**Rotulado de cobertura desigual**, que es el motivo principal de que este visor exista:
+
+- **Galicia** aparece como *cobertura municipal* y **no se pinta en el mapa**: sólo el 0,7 %
+  de sus 28.465 VUT tiene coordenadas, y dibujar esos 212 puntos sugeriría que Galicia
+  apenas tiene oferta.
+- **Madrid** se marca como *cobertura distinta*: mide licencias urbanísticas concedidas, no
+  el registro turístico. Sus 997 registros no son comparables con los 10.627 de Barcelona.
+- Las CCAA **sin registro oficial** incorporado se listan explícitamente: allí lo que se ve
+  procede sólo de OSM.
+
+Notas de implementación:
+
+- Por encima de 5.000 puntos por capa (ajustable) se muestra una **muestra aleatoria**, y se
+  avisa en pantalla de que no se están viendo todos los puntos.
+- El mapa usa `FastMarkerCluster`: crear un `folium.Marker` por punto en Python tardaba
+  190 s con ~20.000 marcadores, porque cada uno renderiza su plantilla. Enviando las
+  coordenadas en bruto y construyendo los círculos en el navegador, el arranque baja a 29 s.
+- Restauración viene desactivada por defecto: con 112.235 puntos domina el mapa.
 
 ## Modelo de datos
 
