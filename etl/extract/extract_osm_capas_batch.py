@@ -37,17 +37,45 @@ from extract_osm import (
     resumen_por_clave,
 )
 from extract_osm_atracciones import CAPA as CAPA_ATRACCIONES
+from extract_osm_camping import FILTROS as FILTROS_CAMPING
+from extract_osm_camping import normalizar as normalizar_camping
 from extract_osm_restauracion import CAPA as CAPA_RESTAURACION
 from extract_osm_transporte import CAPA as CAPA_TRANSPORTE
 
 PAUSA_ENTRE_CONSULTAS = 25
 PROGRESO = RAW_DIR / "capas_progreso.json"
+PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
+
+CAPA_CAMPING = Capa(
+    prefijo="camping",
+    descripcion="Campings y áreas de autocaravana.",
+    perfiles={"estandar": FILTROS_CAMPING},
+    perfil_por_defecto="estandar",
+    claves_resumen=("tourism",),
+)
 
 CAPAS: dict[str, tuple[Capa, str]] = {
     "restauracion": (CAPA_RESTAURACION, "estandar"),
     "atracciones": (CAPA_ATRACCIONES, "estandar"),
     "transporte": (CAPA_TRANSPORTE, "principales"),
+    "camping": (CAPA_CAMPING, "estandar"),
 }
+
+# Camping va al final: es la capa más reciente y la de menor volumen, así que no debe
+# retrasar la extracción de las que ya estaban en marcha. Con esto, una ejecución completa
+# termina primero las tres capas originales en todas las CCAA y sólo después empieza
+# con camping.
+CAPAS_BAJA_PRIORIDAD = ("camping",)
+
+# Capas que además del crudo generan un CSV normalizado en data/processed/.
+NORMALIZADORES = {"camping": normalizar_camping}
+
+# Capas tan dispersas que un resultado de 0 puede ser real: Melilla tiene 13 km² y es
+# perfectamente posible que no haya ningún camping. El guardia contra respuestas
+# degradadas se mantiene —se agotan réplicas y reintentos— y sólo si el 0 se repite de
+# forma consistente se acepta como dato. Una respuesta degradada es transitoria y no
+# reproducible; un 0 real sí lo es.
+CAPAS_PUEDEN_ESTAR_VACIAS = ("camping",)
 
 # Las seis con registro oficial de VUT: son las que permiten contrastar la oferta de OSM
 # con la realidad administrativa, así que van primero.
@@ -115,8 +143,14 @@ def main() -> int:
     else:
         objetivo_ccaa = PRIORITARIAS if args.solo_prioritarias else PRIORITARIAS + RESTO
 
-    # CCAA en el bucle externo: así las prioritarias quedan completas cuanto antes.
-    unidades = [(c, k) for c in objetivo_ccaa for k in args.capas]
+    # CCAA en el bucle externo: así las prioritarias quedan completas cuanto antes. Las
+    # capas de baja prioridad se dejan para el final del todo, para no retrasar a las demás.
+    normales = [k for k in args.capas if k not in CAPAS_BAJA_PRIORIDAD]
+    tardias = [k for k in args.capas if k in CAPAS_BAJA_PRIORIDAD]
+    unidades = (
+        [(c, k) for c in objetivo_ccaa for k in normales]
+        + [(c, k) for k in tardias for c in objetivo_ccaa]
+    )
 
     progreso = cargar_progreso()
     inicio = time.time()
@@ -157,16 +191,34 @@ def main() -> int:
 
         print(f"{etiqueta} ({iso})")
         t0 = time.time()
+        query = construir_query_filtros(iso, capa.perfiles[perfil])
+        vacio_confirmado = False
         try:
-            datos = consultar_overpass(
-                construir_query_filtros(iso, capa.perfiles[perfil])
-            )
+            datos = consultar_overpass(query)
         except RuntimeError as exc:
-            print(f"  FALLO: {exc}\n")
-            progreso["unidades"][clave] = {"estado": "error", "error": str(exc)[:300]}
-            guardar_progreso(progreso)
-            fallidas += 1
-            continue
+            # Si la capa admite el vacío y el fallo fue precisamente por 0 elementos,
+            # se hace una última consulta aceptándolo: el 0 ya se ha repetido en todas
+            # las réplicas y reintentos, así que es un dato, no un corte del servicio.
+            reintentar_vacio = (
+                slug_capa in CAPAS_PUEDEN_ESTAR_VACIAS and "0 elementos" in str(exc)
+            )
+            if not reintentar_vacio:
+                print(f"  FALLO: {exc}\n")
+                progreso["unidades"][clave] = {"estado": "error", "error": str(exc)[:300]}
+                guardar_progreso(progreso)
+                fallidas += 1
+                continue
+
+            print("  0 elementos de forma consistente: se acepta como territorio sin oferta.")
+            try:
+                datos = consultar_overpass(query, reintentos=1, permitir_vacio=True)
+            except RuntimeError as exc2:
+                print(f"  FALLO: {exc2}\n")
+                progreso["unidades"][clave] = {"estado": "error", "error": str(exc2)[:300]}
+                guardar_progreso(progreso)
+                fallidas += 1
+                continue
+            vacio_confirmado = True
 
         elementos = datos.get("elements", [])
         fichero = guardar_raw(
@@ -174,11 +226,22 @@ def main() -> int:
             prefijo=nombre_capa(slug_capa), claves_resumen=capa.claves_resumen,
         )
 
+        # Algunas capas, además del crudo, producen su CSV en el esquema común de oferta.
+        fichero_norm = None
+        normalizador = NORMALIZADORES.get(slug_capa)
+        if normalizador is not None:
+            PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+            df = normalizador(elementos, nombre, datetime.now(timezone.utc))
+            fichero_norm = PROCESSED_DIR / f"{slug_capa}_normalizado_{slug_ccaa}.csv"
+            df.to_csv(fichero_norm, index=False, encoding="utf-8")
+
         progreso["unidades"][clave] = {
             "estado": "ok",
             "elementos": len(elementos),
             "fichero": fichero.name,
+            "fichero_normalizado": fichero_norm.name if fichero_norm else None,
             "resumen": resumen_por_clave(elementos, capa.claves_resumen),
+            "vacio_confirmado": vacio_confirmado or None,
             "fecha": datetime.now(timezone.utc).isoformat(),
         }
         guardar_progreso(progreso)

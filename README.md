@@ -45,7 +45,8 @@ tfm-tui-dashboard/
 │   ├── app_preliminar.py   # Visor de inventario (implementado)
 │   └── app.py              # Dashboard analítico (pendiente)
 ├── notebooks/          # Exploración y validación de datos
-├── docs/               # Memoria del TFM, diagramas, notas metodológicas
+├── docs/
+│   └── inventario_datos.md  # Estado de todas las capas (autogenerado)
 ├── .env                # DATABASE_URL de Railway (no versionado)
 └── requirements.txt
 ```
@@ -352,9 +353,19 @@ python etl/extract/extract_osm_capas_batch.py --solo-prioritarias
 python etl/extract/extract_osm_capas_batch.py --capas restauracion --pausa 30
 ```
 
-Recorre las tres capas CCAA a CCAA con pausa entre consultas, empezando por las **seis
+Recorre las capas CCAA a CCAA con pausa entre consultas, empezando por las **seis
 comunidades con registro oficial de VUT** (Baleares, Canarias, Cataluña, Andalucía, Madrid y
 C. Valenciana), que son donde más aporta cruzar todas las capas con la oferta de alojamiento.
+
+**Camping va en último lugar**, después de que las otras tres capas hayan terminado en todas
+las comunidades, para no retrasarlas. Es además la única capa del batch que genera también su
+CSV normalizado en `data/processed/`.
+
+Camping admite además el **resultado vacío legítimo**: Melilla tiene 13 km² y no tiene ningún
+camping. El guardia contra respuestas degradadas se mantiene —se agotan réplicas y
+reintentos—, y sólo si el 0 se repite de forma consistente se acepta como dato y se anota
+como `vacio_confirmado` en el progreso. Una respuesta degradada es transitoria; un 0 real es
+reproducible.
 
 Es reanudable: cada unidad (capa × CCAA) va a su propio JSON y queda anotada en
 `data/raw/capas_progreso.json`. Al relanzarlo, lo ya extraído se salta y sólo se reintenta lo
@@ -746,6 +757,37 @@ Cuando ambos resuelven coinciden bien: mediana de 38 m, p90 de 229 m, y el 68 % 
 100 m. Son geocodificadores complementarios —Cartociudad aporta 36 direcciones que el
 Catastro no resuelve—, pero ni sumándolos se llega al 60 %.
 
+### Decisión: Galicia a resolución municipal
+
+```bash
+python etl/transform/agregar_galicia_municipal.py
+```
+
+**Galicia no se geocodifica a nivel de punto.** Con el mejor de los dos servicios al 45 % y
+ambos combinados al 57 %, el problema no es la cifra sino *qué* falla: los topónimos rurales
+dispersos. Geocodificar dejaría el mapa con Vigo, A Coruña y Santiago, y sin el rural
+gallego, que es justo donde las Rías Baixas concentran presión turística. Ese mapa diría
+"aquí no hay presión turística" donde en realidad dice "aquí no supimos ubicar la oferta".
+
+A nivel de concello el dato es sólido, y es la resolución que necesita el indicador de
+saturación:
+
+| | |
+|---|---:|
+| Concellos con VUT | 306 |
+| VUT agregadas | 28.464 |
+| Plazas declaradas | 156.026 |
+| Cobertura de plazas | 98,8 % |
+
+Salida en `data/processed/vut_galicia_municipal.csv`, con `n_vut`, `plazas_total`,
+`plazas_estimadas` (completando las no declaradas con la media del concello, en columna
+aparte para no mezclar dato medido con estimación) y una `clave_join` normalizada —sin
+artículos ni acentos, con provincia como desambiguador— lista para cruzar con la población
+municipal del INE y obtener el ratio de plazas por habitante.
+
+Los concellos con más oferta son Sanxenxo (3.298 VUT, 17.538 plazas), Vigo (1.991) y
+A Coruña (1.314): un perfil de costa que la geocodificación por punto habría distorsionado.
+
 ## Visor preliminar de inventario
 
 ```bash
@@ -782,6 +824,20 @@ Notas de implementación:
   190 s con ~20.000 marcadores, porque cada uno renderiza su plantilla. Enviando las
   coordenadas en bruto y construyendo los círculos en el navegador, el arranque baja a 29 s.
 - Restauración viene desactivada por defecto: con 112.235 puntos domina el mapa.
+
+## Inventario de datos
+
+```bash
+python etl/transform/generar_inventario.py
+```
+
+Genera [docs/inventario_datos.md](docs/inventario_datos.md): una fila por capa, fuente y
+territorio con registros, geolocalización, resolución espacial, nivel de confianza y
+limitaciones declaradas, más una sección que recoge las trampas metodológicas identificadas.
+
+Las cifras **se leen de los ficheros reales** de `data/` en cada ejecución, no están escritas
+a mano. Conviene relanzarlo tras cada extracción para que el capítulo de metodología no se
+quede con números obsoletos.
 
 ## Modelo de datos
 
