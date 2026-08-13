@@ -621,6 +621,42 @@ topónimos rurales sin vía ni número (`LUGAR DE PEREIRIÑA`, `HURRAQUIÑA`, `L
 El Catastro indexa por vía y portal, y ahí no hay ni una cosa ni la otra. Extrapolado, el lote
 completo serían 13 h para geocodificar menos de la mitad.
 
+### Galicia, con Cartociudad del IGN (piloto)
+
+```bash
+python etl/transform/geocode_cartociudad_galicia_piloto.py --muestra 300 --semilla 42
+```
+
+Cartociudad es el geocodificador oficial español (IGN + Catastro + Correos). Se usa **la
+misma muestra y la misma semilla** que el piloto de Catastro, y la misma limpieza de
+direcciones, para poder comparar dirección a dirección.
+
+**Resultado: 26,7 %**, por debajo del 45 % del Catastro.
+
+> **Cartociudad hace coincidencia difusa y no avisa.** Si no encuentra la vía en el
+> municipio pedido, devuelve una homónima de otro concello con `type: "portal"`, es decir,
+> con apariencia de resultado exacto. En el piloto, los casos cuyo municipio devuelto no
+> coincidía estaban a una **mediana de 71 km** del resultado del Catastro; los que coincidían,
+> a **38 m**. Sin ese filtro la cobertura parece del 32 %, pero un 5 % de los registros
+> estaría en otra comarca. El script rechaza esos resultados, y por eso la cifra buena es
+> 26,7 % y no 32 %.
+
+#### Comparativa sobre las mismas 300 direcciones
+
+| | Direcciones | % |
+|---|---:|---:|
+| Resuelven ambos | 44 | 14,7 % |
+| Sólo Catastro | 91 | 30,3 % |
+| Sólo Cartociudad | 36 | 12,0 % |
+| Ninguno | 129 | 43,0 % |
+| **Cobertura Catastro** | | **45,0 %** |
+| **Cobertura Cartociudad** | | **26,7 %** |
+| **Cobertura combinada** | | **57,0 %** |
+
+Cuando ambos resuelven coinciden bien: mediana de 38 m, p90 de 229 m, y el 68 % a menos de
+100 m. Son geocodificadores complementarios —Cartociudad aporta 36 direcciones que el
+Catastro no resuelve—, pero ni sumándolos se llega al 60 %.
+
 ## Modelo de datos
 
 Tabla `establecimientos_turisticos`: identidad de la fuente (`fuente_dato` + `id_fuente`, con
