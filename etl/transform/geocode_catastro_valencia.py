@@ -158,6 +158,10 @@ def consultar_rc(rc14: str, sesion: requests.Session) -> dict:
     except (requests.RequestException, ET.ParseError) as exc:
         registro["error"] = f"{type(exc).__name__}: {exc}"
         registro["reintentable"] = True  # fallo de red: no se cachea
+        # El Catastro corta con 403 cuando el ritmo sostenido le parece excesivo. Se
+        # distingue del resto de fallos para poder frenar en vez de seguir insistiendo.
+        registro["throttled"] = isinstance(exc, requests.HTTPError) and \
+            exc.response is not None and exc.response.status_code in (403, 429)
         return registro
 
     err = raiz.find(".//c:lerr/c:err/c:des", NS)
@@ -199,7 +203,8 @@ def resolver(pendientes: list[str], delay: float) -> dict[str, dict]:
         print(f"  Tiempo estimado: {len(faltan) * delay / 60:.0f} min a {1 / delay:.0f} req/s\n")
 
     sesion = requests.Session()
-    aciertos = fallos_red = 0
+    aciertos = fallos_red = throttles = 0
+    delay_actual = delay
 
     for i, rc in enumerate(faltan, start=1):
         registro = consultar_rc(rc, sesion)
@@ -207,10 +212,24 @@ def resolver(pendientes: list[str], delay: float) -> dict[str, dict]:
         if registro.get("reintentable"):
             # No se cachea: en la siguiente ejecución se vuelve a intentar.
             fallos_red += 1
-            if fallos_red % 20 == 1:
-                print(f"  [{i}/{len(faltan)}] fallo de red ({registro['error'][:60]}), sigue")
-            time.sleep(2)
+            if registro.get("throttled"):
+                # Retroceso adaptativo: se espera y se baja el ritmo de forma permanente.
+                # Insistir al mismo ritmo sólo alarga el corte y desperdicia la ejecución.
+                throttles += 1
+                delay_actual = min(delay_actual * 1.5, 2.0)
+                espera = min(30 * throttles, 300)
+                print(f"  [{i}/{len(faltan)}] el Catastro está limitando el ritmo "
+                      f"(403/429). Espera {espera}s y nuevo delay {delay_actual:.2f}s")
+                time.sleep(espera)
+            else:
+                if fallos_red % 20 == 1:
+                    print(f"  [{i}/{len(faltan)}] fallo de red ({registro['error'][:60]}), sigue")
+                time.sleep(2)
             continue
+
+        # Una racha limpia tras un corte permite recuperar ritmo poco a poco.
+        if throttles and i % 2000 == 0 and delay_actual > delay:
+            delay_actual = max(delay, delay_actual / 1.2)
 
         cache[rc] = registro
         anexar_cache(registro)
@@ -218,12 +237,18 @@ def resolver(pendientes: list[str], delay: float) -> dict[str, dict]:
             aciertos += 1
 
         if i % 500 == 0 or i == len(faltan):
-            print(f"  [{i}/{len(faltan)}] {aciertos:,} resueltas ({100 * aciertos / i:.1f}%)")
+            # El porcentaje se calcula sobre lo efectivamente consultado: contar los cortes
+            # del servicio como fallos daría una tasa de acierto engañosamente baja.
+            consultadas = i - fallos_red
+            pct = 100 * aciertos / consultadas if consultadas else 0
+            print(f"  [{i}/{len(faltan)}] {aciertos:,} resueltas de {consultadas:,} "
+                  f"consultadas ({pct:.1f}%)")
 
-        time.sleep(delay)
+        time.sleep(delay_actual)
 
     if fallos_red:
-        print(f"\n  Fallos de red no cacheados: {fallos_red} (se reintentan al relanzar)")
+        print(f"\n  Sin cachear por cortes del servicio: {fallos_red:,} "
+              f"({throttles} limitaciones de ritmo). Relanza el script para reintentarlas.")
     return cache
 
 
