@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import unicodedata
@@ -83,6 +84,24 @@ def nucleo_municipio(texto: object) -> str:
     """Nombre de municipio sin artículos, para comparar entre fuentes."""
     palabras = [p for p in normalizar(texto).split() if p not in ARTICULOS]
     return " ".join(palabras)
+
+
+def variantes_municipio(texto: object) -> list[str]:
+    """
+    Todas las formas con las que puede aparecer un municipio valenciano.
+
+    El registro y el Catastro publican el par bilingüe en orden distinto: el registro
+    escribe "ALACANT/ALICANTE" y el Catastro "ALICANTE/ALACANT", y lo mismo con
+    "VILA JOIOSA, LA/VILLAJOYOSA". Comparar la cadena entera da un 20 % de falsos
+    negativos, así que se separa en variantes y basta con que una coincida.
+    """
+    bruto = str(texto) if texto is not None else ""
+    partes = re.split(r"[/,]", bruto)
+    variantes = {nucleo_municipio(p) for p in partes if nucleo_municipio(p)}
+    completo = nucleo_municipio(bruto)
+    if completo:
+        variantes.add(completo)
+    return sorted(variantes, key=len, reverse=True)
 
 
 # ---------------------------------------------------------------------------
@@ -353,14 +372,25 @@ def main() -> int:
             print(f"    {n:>7,}  {motivo[:64]}")
 
     # Contraste del domicilio devuelto por el Catastro con el municipio del registro.
-    muestra = df[resueltas & df["catastro_ldt"].notna()].head(3000)
-    if len(muestra):
+    # El domicilio (`ldt`) sólo incluye el municipio cuando trae la provincia entre
+    # paréntesis; sin eso no hay nada que contrastar y la fila se excluye del cálculo en
+    # vez de contarla como discrepancia.
+    verificables = df[
+        resueltas
+        & df["catastro_ldt"].notna()
+        & df["catastro_ldt"].astype(str).str.contains(r"\(", regex=True)
+    ]
+    if len(verificables):
+        ldt = verificables["catastro_ldt"].map(nucleo_municipio)
         coincide = [
-            bool(nucleo_municipio(m)) and nucleo_municipio(m) in nucleo_municipio(l)
-            for m, l in zip(muestra["municipio"], muestra["catastro_ldt"])
+            any(v and v in l for v in variantes_municipio(m))
+            for m, l in zip(verificables["municipio"], ldt)
         ]
-        print(f"\n  Contraste de municipio (muestra de {len(muestra):,}): "
-              f"{100 * sum(coincide) / len(coincide):.1f} % coincide con el del Catastro")
+        n_ok = sum(coincide)
+        print(f"\n  Contraste de municipio ({len(verificables):,} verificables de "
+              f"{int(resueltas.sum()):,}): {100 * n_ok / len(coincide):.1f} % coincide")
+        if n_ok < len(coincide):
+            print(f"    Discrepan: {len(coincide) - n_ok:,}")
 
     print(f"\n  Salida: {SALIDA.relative_to(PROJECT_ROOT)}")
     print(f"  Caché:  {CACHE_PATH.relative_to(PROJECT_ROOT)}")

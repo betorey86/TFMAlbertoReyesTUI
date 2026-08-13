@@ -30,7 +30,9 @@
       "PowerShell(python \"C:\\\\Users\\\\atdre\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-atdre-tfm-tui-dashboard\\\\8c742128-5e07-418a-9010-f2f37cf84235\\\\scratchpad\\\\gal_esquema.py\")",
       "PowerShell(python \"C:\\\\Users\\\\atdre\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-atdre-tfm-tui-dashboard\\\\8c742128-5e07-418a-9010-f2f37cf84235\\\\scratchpad\\\\gal_dir.py\")",
       "PowerShell(python \"C:\\\\Users\\\\atdre\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-atdre-tfm-tui-dashboard\\\\8c742128-5e07-418a-9010-f2f37cf84235\\\\scratchpad\\\\gal_via_dbg.py\")",
-      "PowerShell(python \"C:\\\\Users\\\\atdre\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-atdre-tfm-tui-dashboard\\\\8c742128-5e07-418a-9010-f2f37cf84235\\\\scratchpad\\\\camp_look.py\")"
+      "PowerShell(python \"C:\\\\Users\\\\atdre\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-atdre-tfm-tui-dashboard\\\\8c742128-5e07-418a-9010-f2f37cf84235\\\\scratchpad\\\\camp_look.py\")",
+      "PowerShell(cd c:\\\\Users\\\\atdre\\\\tfm-tui-dashboard; $env:PYTHONUNBUFFERED='1'; python etl/transform/geocode_catastro_valencia.py --delay 0.5)",
+      "PowerShell(python \"C:\\\\Users\\\\atdre\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-atdre-tfm-tui-dashboard\\\\8c742128-5e07-418a-9010-f2f37cf84235\\\\scratchpad\\\\cv_muni2.py\")"
     ]
   }
 }
