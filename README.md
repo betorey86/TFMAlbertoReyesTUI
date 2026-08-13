@@ -424,19 +424,20 @@ a partir de la dirección postal.
 | Fuente | Ámbito | Registros | Con coord. | % |
 |---|---|---:|---:|---:|
 | Andalucía (OpenRTA) | CCAA completa | 168.796 | 159.880 | 94,7 % |
-| Comunitat Valenciana (GVA) | CCAA completa | 89.978 | 0 | 0 % |
+| Comunitat Valenciana (GVA) | CCAA completa | 89.978 | 67.700² | 75,2 % |
 | Canarias (Registro General Turístico) | CCAA completa | 72.645 | 48.606 | 66,9 % |
 | Galicia (REAT) | CCAA completa | 28.465 | 212 | 0,7 % |
 | Mallorca (Consell de Mallorca) | Sólo Mallorca | 16.854 | 8.909 | 52,9 % |
 | Barcelona (Open Data BCN) | Sólo ciudad | 10.627 | 10.627 | 100 % |
 | País Vasco (REATE) | CCAA completa | 4.786 | 4.053¹ | 84,7 % |
 | Madrid (Geoportal) | Sólo ciudad | 997 | 997 | 100 % |
-| **TOTAL** | | **393.148** | **233.284** | **59,3 %** |
+| **TOTAL** | | **393.148** | **300.984** | **76,6 %** |
 
-¹ Tras geocodificar; en origen no traía ninguna. Ver la sección de geocodificación.
+¹ Tras geocodificar con Nominatim; en origen no traía ninguna.
+² Tras geocodificar con el Catastro; quedan ~21.350 pendientes de reintento.
 
-Pendiente de geocodificar: 89.978 de Valencia y 28.253 de Galicia. Ambas fuentes publican
-referencias que permiten hacerlo mejor que con Nominatim — Valencia trae `ref_catastral`.
+Pendiente de geocodificar: ~21.350 de Valencia (bloqueo temporal del Catastro, se reanuda con
+la caché) y 28.253 de Galicia (sin estrategia viable: ver el piloto de Cartociudad).
 
 Comprobado sobre los normalizados: el esquema es idéntico en las 6 fuentes, el flag
 `necesita_geocodificacion` es coherente con la presencia de coordenadas, y el 99,99 % de los
@@ -639,12 +640,48 @@ Dos detalles que condicionan el proceso:
 - Truncar tiene un efecto colateral muy favorable: **35.070 parcelas únicas** para 89.201
   registros. Deduplicar ahorra el 61 % de las consultas, porque muchas VUT comparten edificio.
 
-Validación con 200 parcelas: **100 % resueltas**, y el domicilio devuelto por el Catastro
-coincide con el municipio del registro en el **100 %** de los 879 registros que cubrían.
+Validación con 200 parcelas: **100 % resueltas**.
 
-> El contraste de municipio exige normalizar el artículo: el registro escribe `ATZÚBIA, L'` y
-> el Catastro `L'ATZUBIA`. Comparados en crudo daban un 97 % engañoso, con 26 falsos negativos
-> que eran el mismo municipio.
+#### Resultado del lote completo (13/08/2026)
+
+| | Registros | % |
+|---|---:|---:|
+| Con referencia catastral | 89.201 | 99,1 % |
+| **Geocodificados** | **67.700** | **75,2 %** |
+| Pendientes de reintento | ~21.350 | 23,7 % |
+| Fallo real (RC inexistente o sin cartografía) | 149 | 0,2 % |
+
+**La tasa de acierto efectiva es del 99,8 %**: de las 27.898 parcelas efectivamente
+consultadas, sólo 149 fallaron de verdad (76 referencias que ya no existen y 73 sin
+cartografía disponible). El 23,7 % pendiente no son fallos, son consultas que nunca llegaron
+a hacerse porque el servicio cortó.
+
+Contraste con el domicilio que devuelve el Catastro: **99,97 % de coincidencia de municipio**
+(18 discrepancias reales sobre 67.700, casi todas variantes valenciano/castellano del tipo
+`FAGECA`/`FACHECA` o `HERBERS`/`HERBES`).
+
+> **Dos trampas en esta métrica**, ambas corregidas. Se calculaba sobre las *primeras* 3.000
+> filas y el fichero viene ordenado por provincia, así que no era una muestra. Y comparaba la
+> cadena bilingüe completa, pero el registro escribe `ALACANT/ALICANTE` y el Catastro
+> `ALICANTE/ALACANT`: eso solo generaba un 20 % de falsos negativos. Ahora se comparan
+> variantes separadas sobre todos los registros verificables.
+
+#### Limitación de ritmo del Catastro
+
+El servicio corta con **HTTP 403** ante un ritmo sostenido. A 4 req/s aguanta unas 20.000
+consultas y luego bloquea en ráfagas; tras la ejecución completa el bloqueo se mantuvo, y un
+reintento inmediato recibió 403 desde la primera petición.
+
+El script tiene retroceso adaptativo (espera creciente y bajada permanente del ritmo), pero
+ante un bloqueo persistente **lo correcto es esperar**, no insistir. Para completar las
+~21.350 pendientes:
+
+```bash
+# dejar pasar unas horas desde el último 403, y entonces:
+python etl/transform/geocode_catastro_valencia.py --delay 1.0
+```
+
+La caché hace que sólo se consulten las que faltan.
 
 ### Galicia, por dirección (piloto)
 
