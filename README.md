@@ -839,6 +839,32 @@ Las cifras **se leen de los ficheros reales** de `data/` en cada ejecución, no 
 a mano. Conviene relanzarlo tras cada extracción para que el capítulo de metodología no se
 quede con números obsoletos.
 
+## Base municipal del INE
+
+```bash
+python etl/extract/extract_ine_municipios.py
+```
+
+Unidad territorial de análisis del proyecto. Salidas: `data/processed/municipios_ine.csv`
+y `municipios_ine.geojson`.
+
+| Fuente | Qué aporta |
+|---|---|
+| INE, seccionado censal (`seccionado_2026.zip`) | Geometría: 36.669 secciones que se disuelven por `CUMUN` en 8.132 municipios |
+| INE, padrón municipal (`pobmun.zip`) | Población por municipio |
+| Calculado sobre el polígono (EPSG:25830) | Superficie en km² |
+
+Se usa el seccionado del INE y **no** el WFS de unidades administrativas del IGN porque este
+último sólo sirve GML a máxima resolución: 200 provincias pesan 81 MB, así que los 8.100
+municipios serían inmanejables.
+
+**La clave de cruce es siempre el código INE de 5 dígitos**, nunca el nombre. El INE escribe
+`Coruña, A` donde los registros autonómicos escriben `A CORUÑA`, y cruzar por nombre falla
+justo en los municipios grandes.
+
+Resultado: 8.132 municipios, 49.114.494 habitantes (padrón 2025), 504.979 km². Sin códigos
+duplicados y sin nulos.
+
 ## Modelo de datos
 
 Tabla `establecimientos_turisticos`: identidad de la fuente (`fuente_dato` + `id_fuente`, con

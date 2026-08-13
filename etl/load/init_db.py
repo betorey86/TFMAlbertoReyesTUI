@@ -1,8 +1,13 @@
 """
 Inicializa la base de datos de Railway: habilita PostGIS y aplica db/schema.sql.
 
-Sustituye al antiguo arranque automático de Docker (donde schema.sql se ejecutaba solo
-al crear el contenedor). Es idempotente: se puede volver a lanzar tras tocar el esquema.
+Crea el modelo de dos niveles del proyecto: `municipios` (unidad de análisis),
+`establecimientos` (detalle con punto) y `agregados_municipales` (comparación entre
+territorios), más la vista `indicadores_municipales`.
+
+Es idempotente: se puede volver a lanzar tras tocar el esquema. Las tablas se crean con
+IF NOT EXISTS, así que **no** recrea ni borra lo ya existente; si cambias una columna de
+una tabla ya creada, hay que migrarla a mano o borrarla antes.
 
 Uso:
     python etl/load/init_db.py
@@ -62,11 +67,16 @@ def comprobar_estado(engine) -> None:
         ).scalars().all()
         print(f"  Tablas en public: {', '.join(tablas) if tablas else '(ninguna)'}")
 
-        if "establecimientos_turisticos" in tablas:
-            n = conn.execute(
-                text("SELECT COUNT(*) FROM establecimientos_turisticos")
-            ).scalar()
-            print(f"  Filas en establecimientos_turisticos: {n}")
+        vistas = conn.execute(
+            text("SELECT viewname FROM pg_views WHERE schemaname = 'public' ORDER BY viewname")
+        ).scalars().all()
+        if vistas:
+            print(f"  Vistas en public:  {', '.join(vistas)}")
+
+        for tabla in ("municipios", "establecimientos", "agregados_municipales"):
+            if tabla in tablas:
+                n = conn.execute(text(f"SELECT COUNT(*) FROM {tabla}")).scalar()
+                print(f"  Filas en {tabla}: {n:,}".replace(",", "."))
 
 
 def habilitar_postgis(engine) -> None:
