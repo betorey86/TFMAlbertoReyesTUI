@@ -503,6 +503,45 @@ def main() -> int:
                   f"resolver: se marcan sin_dato en vez de cero")
             agg.loc[dudosos, "origen_vut"] = "sin_dato"
 
+    # --- Capa hotelera (EOH del INE) ---
+    #
+    # La EOH tiene cobertura nacional pero resolución provincial, salvo en los 132 "puntos
+    # turísticos" que el INE monitoriza uno a uno. Ahí, y sólo ahí, hay plazas hoteleras
+    # municipales fiables.
+    #
+    # Deliberadamente NO se prorratea la cifra provincial entre los municipios de la
+    # provincia. Repartir las 55.000 plazas de Alicante entre sus 141 municipios metería
+    # oferta hotelera en pueblos del interior que no tienen ninguna, y el error viajaría
+    # después al indicador de saturación como si fuera dato. Se marca `eoh_provincia`,
+    # que el cálculo trata como no disponible.
+    ruta_eoh = PROCESSED_DIR / "eoh_hotelera.csv"
+    agg["plazas_hoteleras"] = pd.NA
+    agg["origen_hotelero"] = "sin_dato"
+    if ruta_eoh.exists():
+        eoh = pd.read_csv(ruta_eoh, dtype={"codigo": str})
+        pt = eoh[(eoh["ambito"] == "punto_turistico") & eoh["codigo"].notna()]
+        mapa_plazas = dict(zip(pt["codigo"].str.zfill(5), pt["plazas_hoteleras"]))
+        mapa_establec = dict(zip(pt["codigo"].str.zfill(5), pt["n_establecimientos"]))
+
+        es_pt = agg["codigo_ine"].isin(mapa_plazas)
+        agg.loc[es_pt, "plazas_hoteleras"] = agg.loc[es_pt, "codigo_ine"].map(mapa_plazas)
+        agg["n_establecimientos_hoteleros"] = agg["codigo_ine"].map(mapa_establec)
+        agg.loc[es_pt, "origen_hotelero"] = "eoh_punto_turistico"
+
+        # Para el resto, la EOH sí tiene dato, pero sólo de su provincia.
+        provincias_eoh = {
+            _nucleo(n) for n in eoh.loc[eoh["ambito"] == "provincia", "nombre"]
+        }
+        tiene_provincia = agg["provincia"].map(lambda p: _nucleo(p) in provincias_eoh)
+        agg.loc[~es_pt & tiene_provincia, "origen_hotelero"] = "eoh_provincia"
+
+        print(f"  EOH: {int(es_pt.sum())} municipios con dato hotelero propio "
+              f"(punto turístico); {int((~es_pt & tiene_provincia).sum())} sólo con dato "
+              f"provincial")
+    else:
+        agg["n_establecimientos_hoteleros"] = pd.NA
+        print("  AVISO: falta eoh_hotelera.csv; sin capa hotelera.")
+
     # Control de calidad: qué parte de las VUT del municipio está geolocalizada. No afecta
     # al recuento, pero avisa de dónde el mapa de puntos está incompleto.
     agg["pct_vut_geolocalizadas"] = (
@@ -552,6 +591,7 @@ def main() -> int:
         "lat_centro", "lon_centro",
         "n_alojamientos_osm", "n_vut_oficial", "plazas_vut", "n_vut_con_plazas",
         "pct_vut_con_plazas", "n_vut_geolocalizadas", "pct_vut_geolocalizadas",
+        "plazas_hoteleras", "n_establecimientos_hoteleros", "origen_hotelero",
         "n_restauracion", "n_atracciones", "n_camping",
         "n_transporte", "origen_osm", "origen_vut", "cobertura_vut",
     ]

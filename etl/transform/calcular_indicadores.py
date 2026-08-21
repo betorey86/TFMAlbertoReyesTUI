@@ -155,6 +155,24 @@ def main() -> int:
     ).round(2)
     df["densidad_plazas_km2"] = (plazas / superficie.replace(0, np.nan)).round(3)
 
+    # --- Saturación total: VUT + hoteles ---
+    #
+    # Sólo donde ambos datos son fiables: registro de VUT y punto turístico de la EOH. En
+    # el resto no se suma un cero hotelero, porque no sabemos que sea cero: sabemos que no
+    # tenemos el dato municipal. Sumarlo daría una saturación total menor que la de sólo
+    # VUT, que sería absurdo.
+    hotelero_fiable = df.get("origen_hotelero", pd.Series("sin_dato", index=df.index)) \
+        == "eoh_punto_turistico"
+    plazas_hot = pd.to_numeric(df.get("plazas_hoteleras"), errors="coerce")
+
+    df["plazas_totales"] = (plazas + plazas_hot).where(hay_vut & hotelero_fiable)
+    df["saturacion_total_1000hab"] = (
+        1000 * df["plazas_totales"] / poblacion.replace(0, np.nan)
+    ).round(2)
+    df["pct_plazas_hoteleras"] = (
+        100 * plazas_hot / df["plazas_totales"].replace(0, np.nan)
+    ).round(1)
+
     # --- Servicios: OSM cubre todo el territorio, así que se calcula en todos ---
     servicios = df["n_restauracion"].fillna(0) + df["n_atracciones"].fillna(0)
     df["n_servicios"] = servicios.astype(int)
@@ -273,6 +291,32 @@ def main() -> int:
             "km al nodo de transporte más cercano", requiere_vut=False)
     ranking("indice_oportunidad", "ÍNDICE DE OPORTUNIDAD", "demanda − saturación")
     ranking("indice_riesgo", "ÍNDICE DE RIESGO", "saturación + presión de servicios")
+
+    # --- Efecto de incorporar la capa hotelera ---
+    comp = df[grande & df["saturacion_total_1000hab"].notna()].copy()
+    if not comp.empty:
+        comp["puesto_vut"] = comp["saturacion_plazas_1000hab"].rank(ascending=False)
+        comp["puesto_total"] = comp["saturacion_total_1000hab"].rank(ascending=False)
+        comp["salto"] = comp["puesto_vut"] - comp["puesto_total"]
+
+        print("\n" + "=" * 88)
+        print(f"  EFECTO DE INCLUIR HOTELES   ({len(comp):,} municipios con ambos datos)"
+              .replace(",", "."))
+        print("=" * 88)
+        print(f"    {'Municipio':<24}{'sólo VUT':>12}{'VUT+hotel':>12}"
+              f"{'% hotel':>9}{'puesto VUT':>12}{'puesto tot':>12}")
+        print("    " + "-" * 81)
+        for _, f in comp.nlargest(15, "saturacion_total_1000hab").iterrows():
+            print(f"    {f['nombre'][:23]:<24}{f['saturacion_plazas_1000hab']:>12,.0f}"
+                  f"{f['saturacion_total_1000hab']:>12,.0f}{f['pct_plazas_hoteleras']:>8.0f}%"
+                  f"{int(f['puesto_vut']):>12}{int(f['puesto_total']):>12}".replace(",", "."))
+
+        print("\n    Los que más suben al contar hoteles (destinos hoteleros que el "
+              "índice de sólo VUT infravaloraba):")
+        for _, f in comp.nlargest(10, "salto").iterrows():
+            print(f"    {f['nombre'][:23]:<24}{f['saturacion_plazas_1000hab']:>12,.0f}"
+                  f"{f['saturacion_total_1000hab']:>12,.0f}{f['pct_plazas_hoteleras']:>8.0f}%"
+                  f"{int(f['puesto_vut']):>12}{int(f['puesto_total']):>12}".replace(",", "."))
 
     print(f"\n  Salida: {SALIDA.relative_to(PROJECT_ROOT)}")
     return 0
