@@ -31,12 +31,26 @@ import streamlit as st
 from folium.plugins import FastMarkerCluster
 from streamlit_folium import st_folium
 
+from recomendaciones import evaluar
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RAW_DIR = PROJECT_ROOT / "data" / "raw"
 PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
+# Conjunto ligero y autocontenido que genera etl/transform/preparar_datos_dashboard.py. Es
+# el único que viaja en el repositorio, y por tanto el que existe en un despliegue. En la
+# máquina de desarrollo puede no estar, y entonces se leen los ficheros completos.
+DASHBOARD_DIR = PROJECT_ROOT / "data" / "dashboard"
 
-INDICADORES = PROCESSED_DIR / "indicadores_municipales.csv"
-GEOMETRIA = PROCESSED_DIR / "municipios_simplificado.geojson"
+
+def _fuente(nombre: str) -> Path:
+    """Devuelve el fichero de despliegue si existe y, si no, el de trabajo."""
+    ligero = DASHBOARD_DIR / nombre
+    return ligero if ligero.exists() else PROCESSED_DIR / nombre
+
+
+INDICADORES = _fuente("indicadores_municipales.csv")
+GEOMETRIA = _fuente("municipios_simplificado.geojson")
+PUNTOS_LIGEROS = DASHBOARD_DIR / "puntos.csv.gz"
 
 COLOR_SIN_DATO = "#c9ccd1"
 LIMITE_PUNTOS = 5_000
@@ -135,8 +149,17 @@ def cargar_geometria() -> dict:
 
 @st.cache_data(show_spinner=False)
 def cargar_puntos() -> pd.DataFrame:
-    """Capas con dato de punto, para la vista de detalle geográfico."""
+    """
+    Capas con dato de punto, para la vista de detalle geográfico.
+
+    Si existe el fichero consolidado de despliegue se usa ése: recorrer los JSON originales
+    supone leer 145 MB repartidos en un centenar de ficheros, lo que en local es aceptable
+    pero en un servidor de despliegue no.
+    """
     import glob
+
+    if PUNTOS_LIGEROS.exists():
+        return pd.read_csv(PUNTOS_LIGEROS, compression="gzip")
 
     capas = {
         "alojamientos": ("alojamientos", "Alojamientos (OSM)"),
@@ -400,6 +423,50 @@ registro de VUT ni donde el dato mide otra magnitud.
 # 3. Ficha de municipio
 # ---------------------------------------------------------------------------
 
+ETIQUETA_CONFIANZA = {
+    "alta": ("Confianza alta", "#1a7f37"),
+    "media": ("Confianza media", "#bf8700"),
+    "insuficiente": ("Datos insuficientes", "#6e7781"),
+}
+
+
+def _lectura_automatica(fila: pd.Series, df: pd.DataFrame) -> None:
+    """
+    Lectura del municipio generada por reglas sobre los indicadores.
+
+    Se muestra siempre acompañada de la evidencia que la sustenta y de su nivel de confianza:
+    una recomendación de inversión sin la cobertura del dato que la respalda es exactamente
+    el tipo de conclusión que este sistema pretende evitar.
+    """
+    rec = evaluar(fila, df)
+    etiqueta, color_conf = ETIQUETA_CONFIANZA.get(rec.confianza, ("—", "#6e7781"))
+
+    st.markdown(
+        f"<div style='border-left:5px solid {rec.color};background:#f6f8fa;"
+        f"padding:14px 18px;border-radius:4px;margin:12px 0'>"
+        f"<div style='display:flex;align-items:baseline;gap:12px;flex-wrap:wrap'>"
+        f"<span style='font-size:1.15rem;font-weight:700;color:{rec.color}'>{rec.titulo}</span>"
+        f"<span style='color:{color_conf};font-weight:600;font-size:0.85rem'>{etiqueta}</span>"
+        f"</div></div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(f"**Diagnóstico.** {rec.diagnostico}")
+    st.markdown(rec.recomendacion)
+
+    for aviso in rec.avisos:
+        st.warning(aviso, icon="⚠️")
+
+    with st.expander("En qué datos se basa esta lectura"):
+        for evidencia in rec.evidencias:
+            st.markdown(f"- {evidencia}")
+        st.caption(
+            "Lectura generada por reglas deterministas sobre percentiles nacionales, sin "
+            "modelos predictivos. Los umbrales y la clasificación están documentados en "
+            "`dashboard/recomendaciones.py`."
+        )
+
+
 def ficha_municipio(df: pd.DataFrame) -> None:
     st.subheader("Ficha de municipio")
 
@@ -418,6 +485,8 @@ def ficha_municipio(df: pd.DataFrame) -> None:
                 unsafe_allow_html=True)
     if fila["ccaa"] in NOTAS_COBERTURA:
         st.caption(NOTAS_COBERTURA[fila["ccaa"]])
+
+    _lectura_automatica(fila, df)
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Población", fmt(fila["poblacion"]))

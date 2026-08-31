@@ -1,0 +1,5 @@
+# Los ficheros de datos del despliegue no deben sufrir conversión de fin de línea: altera
+# su tamaño y, en el caso del .gz, lo corrompería.
+*.geojson -text
+*.gz binary
+*.csv -text

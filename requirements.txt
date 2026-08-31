@@ -1,11 +1,21 @@
-pandas
-geopandas
-pyproj
-requests
-sqlalchemy
-psycopg2-binary
-streamlit
-folium
-streamlit-folium
-plotly
-python-dotenv
+# Dependencias del proyecto, con versiones fijadas para que el despliegue sea reproducible.
+
+# --- Dashboard (lo único que necesita Streamlit Community Cloud) ---
+streamlit==1.61.1
+folium==0.20.0
+streamlit-folium==0.27.4
+branca==0.8.2
+pandas==2.3.3
+numpy==2.3.5
+
+# --- ETL: extracción y transformación ---
+requests==2.32.5
+geopandas==1.1.4
+pyproj==3.7.2
+openpyxl==3.1.5
+geopy==2.5.0
+
+# --- Carga en base de datos (no necesaria para el dashboard) ---
+sqlalchemy==2.0.43
+psycopg2-binary==2.9.12
+python-dotenv==1.2.2

@@ -14,6 +14,10 @@ data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+# El conjunto ligero del dashboard SÍ se versiona: es lo que necesita el
+# despliegue, que no puede regenerar el ETL.
+!data/dashboard/
+!data/dashboard/**
 
 # Notebooks
 .ipynb_checkpoints/
