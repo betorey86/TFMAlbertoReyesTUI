@@ -5,7 +5,7 @@ la referencia para la fase de fusión.
 
 **Generado automáticamente** por `etl/transform/generar_inventario.py` leyendo los ficheros
 reales de `data/raw/` y `data/processed/`. Las cifras no están escritas a mano: se
-recalculan en cada ejecución. Última generación: 13/08/2026 12:16 UTC.
+recalculan en cada ejecución. Última generación: 31/08/2026 05:55 UTC.
 
 ## Resumen
 
@@ -14,8 +14,8 @@ recalculan en cada ejecución. Última generación: 13/08/2026 12:16 UTC.
 | VUT de registros oficiales | 393.148 |
 | — con resolución de punto | 364.683 |
 | — geolocalizados | 300.772 (82.5 %) |
-| Elementos de OpenStreetMap | 171.373 |
-| **Total** | **564.521** |
+| Elementos de OpenStreetMap | 173.932 |
+| **Total** | **567.080** |
 
 ## Inventario detallado
 
@@ -33,7 +33,7 @@ recalculan en cada ejecución. Última generación: 13/08/2026 12:16 UTC.
 | Restauración | España (19 CCAA) | OpenStreetMap (Overpass) | 112.235 | 112.235 | 100.0 % | punto | solo OSM | El bar de barrio y el restaurante turístico comparten etiqueta: mide densidad de hostelería, no especialización turística. |
 | Atracciones | España (19 CCAA) | OpenStreetMap (Overpass) | 28.694 | 28.694 | 100.0 % | punto | solo OSM | Cobertura desigual; `viewpoint` domina el recuento y no equivale a recurso turístico gestionado. |
 | Transporte | España (19 CCAA) | OpenStreetMap (Overpass) | 4.322 | 4.322 | 100.0 % | punto | solo OSM | Perfil de nodos de entrada (estaciones, aeropuertos, ferris). No incluye paradas urbanas. |
-| Camping | España (parcial: 5/19 CCAA) | OpenStreetMap (Overpass) | 851 | 851 | 100.0 % | punto | solo OSM | `capacity` presente en una fracción mínima de los registros y `camp_site` mezcla camping comercial con acampada libre: sirve para contar establecimientos, no capacidad. |
+| Camping | España (19 CCAA) | OpenStreetMap (Overpass) | 3.410 | 3.410 | 100.0 % | punto | solo OSM | `capacity` presente en una fracción mínima de los registros y `camp_site` mezcla camping comercial con acampada libre: sirve para contar establecimientos, no capacidad. |
 
 
 ### Cómo leer la columna "Confianza"
@@ -103,7 +103,7 @@ Baixas concentran presión turística.
 Un mapa así diría *"aquí no hay presión turística"* donde en realidad dice *"aquí no supimos
 ubicar la oferta"*. Por eso Galicia se explota a nivel de concello, donde el dato es sólido:
 
-- **306 concellos** con al menos una VUT registrada.
+- **313 concellos** con al menos una VUT registrada.
 - **156.026 plazas declaradas**, con una cobertura del 98.8 % de los registros.
 - El municipio está en el 100 % de los 28.465 registros.
 
