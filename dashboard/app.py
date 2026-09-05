@@ -147,8 +147,11 @@ LEYENDA_INDICADOR = {
                     "Poca oferta para su población."),
         "ultimo": ("Saturado",
                    "Riesgo de sobrecarga turística."),
-        "destacado": "ultimo",
-        "que_buscar": "El rojo señala los municipios con mayor presión turística.",
+        # Sin extremo destacado: la saturación es un diagnóstico, no un objetivo que
+        # el gestor persiga. Marcar con una estrella el municipio más saturado sugeriría
+        # que es lo que hay que buscar.
+        "destacado": None,
+        "que_buscar": "El rojo señala los municipios más saturados.",
     },
     "Oportunidad": {
         "primero": ("Poco potencial",
@@ -164,7 +167,8 @@ LEYENDA_INDICADOR = {
                     "Cerca de aeropuerto, puerto o estación."),
         "ultimo": ("Mal conectado",
                    "Lejos de cualquier nodo de transporte."),
-        "destacado": "ultimo",
+        # Sin extremo destacado, por el mismo motivo que en saturación.
+        "destacado": None,
         "que_buscar": "El rojo señala los municipios peor comunicados.",
     },
 }
@@ -433,9 +437,13 @@ def leyenda_contextual(vista: str, conf: dict) -> None:
 
     def celda(clave: str, color: str) -> str:
         titulo, detalle = textos[clave]
+        # Sólo se destaca cuando el indicador tiene un extremo que el gestor persigue.
+        # En saturación y accesibilidad ambos extremos son diagnóstico —el rojo describe
+        # un problema, no un objetivo—, así que ninguna celda lleva estrella ni resalte.
+        es_objetivo = destacado is not None and clave == destacado
         resalte = (f"border:2px solid {TUI_AZUL};background:#F0F4F9;"
-                   if clave == destacado else f"border:1px solid {BORDE};background:#fff;")
-        marca = " ⭐" if clave == destacado else ""
+                   if es_objetivo else f"border:1px solid {BORDE};background:#fff;")
+        marca = " ⭐" if es_objetivo else ""
         return (
             f"<div style='flex:1;padding:12px 14px;border-radius:6px;{resalte}'>"
             f"<span class='muestra' style='background:{color};width:15px;height:15px'></span>"
@@ -459,9 +467,11 @@ def leyenda_contextual(vista: str, conf: dict) -> None:
         f"<span style='color:{TEXTO_SUAVE};font-size:0.85rem'>La comunidad no publica "
         f"registro. <b>No es saturación baja.</b></span></div>"
         f"</div>"
+        # La franja es una instrucción de búsqueda sólo donde hay algo que buscar; en el
+        # resto es una descripción del diagnóstico, y el icono lo refleja.
         f"<div style='margin-top:8px;padding:9px 14px;border-radius:6px;"
         f"background:{TUI_AZUL};color:#fff;font-size:0.9rem'>"
-        f"👉 {textos['que_buscar']}</div>"
+        f"{'👉' if destacado else 'ℹ️'} {textos['que_buscar']}</div>"
         f"</div>",
         unsafe_allow_html=True,
     )
