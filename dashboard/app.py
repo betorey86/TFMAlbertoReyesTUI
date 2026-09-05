@@ -718,9 +718,11 @@ def vista_principal(df: pd.DataFrame, geo: dict) -> None:
     #
     # Los municipios sin dato quedan fuera del cálculo: `con_dato` ya los excluye, así que
     # no desplazan los cortes.
+    # La escala se usa sólo para colorear los polígonos. No se añade al mapa como barra de
+    # leyenda: folium la superpone sobre el lienzo y queda cortada, y además duplicaría la
+    # franja de quintiles que ya se muestra arriba con los rangos y los percentiles.
     cortes = escala_quintiles(con_dato[columna])
     escala = escala_mapa(conf, cortes)
-    escala.caption = f"{conf['etiqueta']} — tramos por quintiles"
 
     valores = dict(zip(con_dato["codigo_ine"], con_dato[columna]))
     # Con un filtro de nivel activo el mapa muestra sólo los municipios del tramo; sin él,
@@ -812,8 +814,6 @@ def vista_principal(df: pd.DataFrame, geo: dict) -> None:
         ),
         smooth_factor=1.0,
     ).add_to(mapa)
-
-    escala.add_to(mapa)
 
     # Mapa y tabla lado a lado, alimentados por la misma selección: así se ve dónde está
     # el fenómeno y qué municipios lo componen sin cambiar de vista. En pantallas estrechas
