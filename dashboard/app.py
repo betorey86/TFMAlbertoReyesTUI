@@ -1,4 +1,4 @@
-﻿"""
+"""
 Dashboard de inteligencia territorial turística.
 
 Dirigido al **gestor de destino** —administración, DMO, consorcio turístico—, no al
@@ -55,6 +55,11 @@ PUNTOS_LIGEROS = DASHBOARD_DIR / "puntos.csv.gz"
 COLOR_SIN_DATO = "#c9ccd1"
 LIMITE_PUNTOS = 5_000
 SEMILLA = 42
+
+# Mapa base. Se usa el tileset estándar de OpenStreetMap y no el de CARTO: este último
+# exige clave de API en producción y, sin ella, sirve teselas con la marca de agua
+# "API KEY REQUIRED" repetida sobre todo el fondo del mapa.
+TILES_BASE = "OpenStreetMap"
 
 st.set_page_config(
     page_title="Inteligencia territorial turística",
@@ -113,6 +118,169 @@ CONFIANZA = {
     "no_comparable": ("Mide otra magnitud", "#8250df"),
     "sin_registro": ("Sin registro publicado", "#82071e"),
 }
+
+
+# ---------------------------------------------------------------------------
+# Identidad visual
+# ---------------------------------------------------------------------------
+
+TUI_AZUL = "#002E5D"
+TUI_ROJO = "#D40E14"
+FONDO_CLARO = "#F5F7FA"
+TEXTO = "#2B3038"
+TEXTO_SUAVE = "#5A6472"
+BORDE = "#DDE3EA"
+
+# Lectura en palabras de cada extremo de la escala, por indicador. La clave del rediseño:
+# sin esto, el usuario no sabe si el verde es deseable o indeseable, y la respuesta cambia
+# según el indicador que esté mirando.
+LEYENDA_INDICADOR = {
+    "Saturación": {
+        "bajo": ("Margen disponible", "Poca oferta turística en relación con su población."),
+        "alto": ("Saturado", "Riesgo de sobrecarga: la oferta supera lo que la población absorbe."),
+        "verde_es": "bueno",
+    },
+    "Oportunidad": {
+        "bajo": ("Sin recorrido", "Ya saturado respecto a la demanda que tiene."),
+        "alto": ("Alto potencial", "Poca oferta pero con demanda, servicios y conexiones."),
+        "verde_es": "bueno",
+    },
+    "Accesibilidad": {
+        "bajo": ("Bien conectado", "Cerca de aeropuerto, puerto o estación."),
+        "alto": ("Mal conectado", "Lejos de cualquier nodo de transporte."),
+        "verde_es": "bueno",
+    },
+}
+
+
+def aplicar_estilos() -> None:
+    """Hoja de estilos corporativa. Sólo presentación: no altera ningún dato."""
+    st.markdown(
+        f"""
+        <style>
+        .stApp {{ background: {FONDO_CLARO}; }}
+        html, body, [class*="css"] {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                         "Helvetica Neue", Arial, sans-serif;
+            color: {TEXTO};
+        }}
+        .block-container {{ padding-top: 1.2rem; max-width: 1400px; }}
+
+        /* Cabecera corporativa */
+        .tui-cabecera {{
+            background: {TUI_AZUL};
+            border-radius: 8px;
+            padding: 22px 28px;
+            margin-bottom: 22px;
+            display: flex; align-items: center; gap: 20px;
+        }}
+        .tui-cabecera h1 {{
+            color: #fff; font-size: 1.85rem; font-weight: 700;
+            margin: 0; letter-spacing: -0.3px; line-height: 1.2;
+        }}
+        .tui-cabecera p {{
+            color: #B9C7D8; margin: 6px 0 0; font-size: 0.95rem;
+        }}
+        /* Hueco reservado para el logotipo corporativo. Sustituir el bloque .tui-logo
+           por <img src="..."> cuando se disponga del archivo. */
+        .tui-logo {{
+            width: 62px; height: 62px; border-radius: 8px; flex-shrink: 0;
+            background: rgba(255,255,255,0.12);
+            border: 1px dashed rgba(255,255,255,0.35);
+            display: flex; align-items: center; justify-content: center;
+            color: rgba(255,255,255,0.55); font-size: 0.62rem; text-align: center;
+            font-weight: 600; letter-spacing: 0.5px;
+        }}
+
+        /* Tarjetas */
+        .tui-tarjeta {{
+            background: #fff; border: 1px solid {BORDE}; border-radius: 8px;
+            padding: 16px 18px; height: 100%;
+        }}
+        .tui-tarjeta h4 {{
+            margin: 0 0 8px; font-size: 0.95rem; font-weight: 700; color: {TUI_AZUL};
+        }}
+        .tui-tarjeta p {{ margin: 0; font-size: 0.88rem; color: {TEXTO_SUAVE}; line-height: 1.5; }}
+
+        /* Tarjetas KPI */
+        .tui-kpi {{
+            background: #fff; border: 1px solid {BORDE}; border-radius: 8px;
+            border-top: 3px solid {TUI_AZUL}; padding: 14px 18px; height: 100%;
+        }}
+        .tui-kpi .valor {{
+            font-size: 1.85rem; font-weight: 700; color: {TUI_AZUL};
+            line-height: 1.1; margin: 0;
+        }}
+        .tui-kpi .etiqueta {{
+            font-size: 0.78rem; color: {TEXTO_SUAVE}; text-transform: uppercase;
+            letter-spacing: 0.6px; font-weight: 600; margin: 4px 0 0;
+        }}
+        .tui-kpi .nota {{ font-size: 0.78rem; color: {TEXTO_SUAVE}; margin: 4px 0 0; }}
+        .tui-kpi.acento {{ border-top-color: {TUI_ROJO}; }}
+        .tui-kpi.acento .valor {{ color: {TUI_ROJO}; }}
+        .tui-kpi.neutro {{ border-top-color: #9AA4B2; }}
+        .tui-kpi.neutro .valor {{ color: {TEXTO_SUAVE}; }}
+
+        /* Pestañas */
+        .stTabs [data-baseweb="tab-list"] {{ gap: 4px; border-bottom: 2px solid {BORDE}; }}
+        .stTabs [data-baseweb="tab"] {{
+            font-size: 1rem; font-weight: 600; color: {TEXTO_SUAVE};
+            padding: 10px 18px; border-radius: 6px 6px 0 0;
+        }}
+        .stTabs [aria-selected="true"] {{
+            color: {TUI_AZUL} !important; background: #fff;
+            border-bottom: 3px solid {TUI_ROJO};
+        }}
+
+        /* Selector de indicador */
+        div[data-testid="stSegmentedControl"] button {{
+            font-size: 1rem; font-weight: 600; padding: 10px 22px;
+        }}
+
+        h2, h3 {{ color: {TUI_AZUL}; font-weight: 700; }}
+        .tui-seccion {{ margin-top: 26px; }}
+
+        /* Franja de leyenda del mapa */
+        .tui-leyenda {{
+            display: flex; gap: 0; border-radius: 6px; overflow: hidden;
+            border: 1px solid {BORDE}; margin: 6px 0 4px;
+        }}
+        .tui-leyenda div {{
+            flex: 1; padding: 9px 12px; font-size: 0.82rem; background: #fff;
+        }}
+        .tui-leyenda .muestra {{
+            display: inline-block; width: 13px; height: 13px; border-radius: 3px;
+            margin-right: 7px; vertical-align: -2px; border: 1px solid rgba(0,0,0,.15);
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def cabecera() -> None:
+    st.markdown(
+        f"""
+        <div class="tui-cabecera">
+          <!-- Hueco para el logotipo corporativo: sustituir por <img src="assets/logo.svg"> -->
+          <div class="tui-logo">LOGO</div>
+          <div>
+            <h1>Inteligencia Territorial Turística de España</h1>
+            <p>Saturación y oportunidad de inversión, municipio a municipio ·
+               Herramienta de apoyo a la gestión de destinos</p>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def tarjeta_kpi(valor: str, etiqueta: str, nota: str = "", estilo: str = "") -> str:
+    clase = f"tui-kpi {estilo}".strip()
+    html = f"<div class='{clase}'><p class='valor'>{valor}</p><p class='etiqueta'>{etiqueta}</p>"
+    if nota:
+        html += f"<p class='nota'>{nota}</p>"
+    return html + "</div>"
 
 
 # ---------------------------------------------------------------------------
@@ -229,12 +397,41 @@ def insignia_confianza(cobertura: str) -> str:
 # 1. Vista principal
 # ---------------------------------------------------------------------------
 
-def vista_principal(df: pd.DataFrame, geo: dict) -> None:
-    st.subheader("Mapa de saturación y oportunidad")
+def leyenda_contextual(vista: str, conf: dict) -> None:
+    """
+    Franja que traduce a palabras los extremos de la escala del indicador activo.
 
-    izq, der = st.columns([2, 3])
+    Se redibuja al cambiar de indicador porque el significado del color cambia con él: el
+    verde es siempre el extremo favorable, pero lo que resulta favorable en saturación
+    (poca oferta) no es lo mismo que en accesibilidad (poca distancia).
+    """
+    textos = LEYENDA_INDICADOR[vista]
+    bajo_tit, bajo_txt = textos["bajo"]
+    alto_tit, alto_txt = textos["alto"]
+    verde, rojo = conf["paleta"][0], conf["paleta"][-1]
+
+    st.markdown(
+        f"<div class='tui-leyenda'>"
+        f"<div><span class='muestra' style='background:{verde}'></span>"
+        f"<b>{bajo_tit}</b><br><span style='color:{TEXTO_SUAVE}'>{bajo_txt}</span></div>"
+        f"<div><span class='muestra' style='background:{rojo}'></span>"
+        f"<b>{alto_tit}</b><br><span style='color:{TEXTO_SUAVE}'>{alto_txt}</span></div>"
+        f"<div><span class='muestra' style='background:{COLOR_SIN_DATO}'></span>"
+        f"<b>Sin dato</b><br><span style='color:{TEXTO_SUAVE}'>La comunidad no publica "
+        f"registro. No es saturación baja.</span></div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def vista_principal(df: pd.DataFrame, geo: dict) -> None:
+    st.markdown("### Mapa nacional")
+
+    izq, der = st.columns([3, 2])
     with izq:
-        vista = st.radio("Indicador", list(VISTAS), horizontal=True, key="vista_mapa")
+        vista = st.segmented_control(
+            "Indicador", list(VISTAS), default="Saturación", key="vista_mapa",
+        ) or "Saturación"
     conf = VISTAS[vista]
     columna = conf["columna"]
 
@@ -247,21 +444,28 @@ def vista_principal(df: pd.DataFrame, geo: dict) -> None:
     datos = df[df["ccaa"].isin(ccaa_sel)] if ccaa_sel else df
     con_dato = datos[datos[columna].notna()]
 
+    leyenda_contextual(vista, conf)
     st.caption(conf["ayuda"])
 
     # --- Métricas de cobertura, siempre visibles ---
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Municipios", fmt(len(datos)))
-    c2.metric("Con dato", fmt(len(con_dato)),
-              f"{100 * len(con_dato) / len(datos):.0f} %" if len(datos) else "—",
-              delta_color="off")
-    c3.metric("Sin dato", fmt(len(datos) - len(con_dato)), delta_color="off")
+    pct = f"{100 * len(con_dato) / len(datos):.0f} % del ámbito" if len(datos) else "—"
+    c1.markdown(tarjeta_kpi(fmt(len(datos)), "Municipios en el ámbito"),
+                unsafe_allow_html=True)
+    c2.markdown(tarjeta_kpi(fmt(len(con_dato)), "Con este indicador", pct),
+                unsafe_allow_html=True)
+    c3.markdown(tarjeta_kpi(fmt(len(datos) - len(con_dato)), "Sin dato",
+                            "Se pintan en gris", "neutro"), unsafe_allow_html=True)
     if vista == "Saturación":
         fiables = int((datos["base_saturacion"] == "VUT + hotelera").sum())
-        c4.metric("Con dato hotelero", fmt(fiables), delta_color="off")
+        c4.markdown(tarjeta_kpi(fmt(fiables), "Incluyen hoteles",
+                                "VUT + EOH", "acento"), unsafe_allow_html=True)
     else:
-        c4.metric("Mediana", fmt(con_dato[columna].median(), 1) if len(con_dato) else "—",
-                  delta_color="off")
+        mediana = fmt(con_dato[columna].median(), 1) if len(con_dato) else "—"
+        c4.markdown(tarjeta_kpi(mediana, "Mediana", conf["etiqueta"], "acento"),
+                    unsafe_allow_html=True)
+
+    st.markdown("<div class='tui-seccion'></div>", unsafe_allow_html=True)
 
     if con_dato.empty:
         st.warning("No hay datos para esta selección.")
@@ -280,7 +484,7 @@ def vista_principal(df: pd.DataFrame, geo: dict) -> None:
     valores = dict(zip(con_dato["codigo_ine"], con_dato[columna]))
     visibles = set(datos["codigo_ine"])
 
-    mapa = folium.Map(location=[40.0, -3.7], zoom_start=6, tiles="cartodbpositron")
+    mapa = folium.Map(location=[40.0, -3.7], zoom_start=6, tiles=TILES_BASE)
 
     def estilo(elemento):
         codigo = elemento["properties"].get("codigo_ine")
@@ -331,17 +535,8 @@ def vista_principal(df: pd.DataFrame, geo: dict) -> None:
     escala.add_to(mapa)
     st_folium(mapa, width=None, height=560, returned_objects=[])
 
-    # --- Leyenda del "sin dato" ---
-    st.markdown(
-        f"<div style='display:flex;align-items:center;gap:8px;margin-top:-8px'>"
-        f"<span style='display:inline-block;width:18px;height:18px;"
-        f"background:{COLOR_SIN_DATO};border:1px solid #999'></span>"
-        f"<b>Sin dato</b> — no es saturación baja. Son municipios cuya comunidad no publica "
-        f"registro de VUT, o donde el dato disponible mide otra magnitud."
-        f"</div>",
-        unsafe_allow_html=True,
-    )
-
+    # La leyenda de colores ya se muestra sobre el mapa, contextualizada al indicador
+    # activo. Aquí sólo quedan los avisos de cobertura por territorio.
     for ccaa, nota in NOTAS_COBERTURA.items():
         if not ccaa_sel or ccaa in ccaa_sel:
             st.caption(nota)
@@ -579,7 +774,7 @@ def detalle_geografico(df: pd.DataFrame) -> None:
         if pd.notna(fila["lat_centro"]):
             centro, zoom = [fila["lat_centro"], fila["lon_centro"]], 13
 
-    mapa = folium.Map(location=centro, zoom_start=zoom, tiles="cartodbpositron")
+    mapa = folium.Map(location=centro, zoom_start=zoom, tiles=TILES_BASE)
     muestreadas = []
     for capa in capas:
         sub = puntos[puntos["capa"] == capa]
@@ -603,14 +798,98 @@ def detalle_geografico(df: pd.DataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Panel de bienvenida
+# ---------------------------------------------------------------------------
+
+def panel_bienvenida() -> None:
+    """
+    Orientación para quien abre la herramienta por primera vez.
+
+    El bloque de mayor peso visual es el de lectura del mapa. El motivo es que el
+    significado del color cambia según el indicador y, sin decirlo de forma explícita, el
+    visitante no puede saber si el verde es deseable o indeseable en lo que está viendo.
+    """
+    izq, cen, der = st.columns(3)
+    with izq:
+        st.markdown(
+            "<div class='tui-tarjeta'><h4>Qué es</h4><p>Una herramienta de "
+            "<b>inteligencia territorial turística</b>. Identifica, municipio a municipio, "
+            "qué zonas de España están <b>saturadas</b> de oferta turística y cuáles "
+            "conservan <b>margen de crecimiento</b>.</p></div>",
+            unsafe_allow_html=True,
+        )
+    with cen:
+        st.markdown(
+            "<div class='tui-tarjeta'><h4>Para quién</h4><p>Para <b>gestores de destino</b>: "
+            "administraciones locales y autonómicas, DMOs, consorcios turísticos e "
+            "inversores. No está pensada para el viajero: no dice dónde alojarse, sino "
+            "<b>dónde actuar</b>.</p></div>",
+            unsafe_allow_html=True,
+        )
+    with der:
+        st.markdown(
+            f"<div class='tui-tarjeta' style='border-left:4px solid {TUI_ROJO}'>"
+            "<h4>Por dónde empezar</h4><p>Para encontrar <b>dónde invertir</b>, usa el "
+            "indicador <b>Oportunidad</b>.<br>Para encontrar <b>zonas en riesgo</b>, usa "
+            "<b>Saturación</b>.</p></div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<div class='tui-seccion'></div>", unsafe_allow_html=True)
+    st.markdown("#### Cómo leer los colores del mapa")
+    st.caption(
+        "El significado del color depende del indicador que estés viendo. Esta es la "
+        "equivalencia en los tres casos."
+    )
+
+    filas = [
+        ("Saturación", "🟩 Verde", "Margen disponible: poca oferta para su población",
+         "🟥 Rojo", "Saturado: riesgo de sobrecarga turística"),
+        ("Oportunidad", "🟩 Verde", "Alto potencial: poca oferta pero con demanda, "
+         "servicios y buena conexión", "🟥 Rojo", "Sin recorrido: ya saturado para la "
+         "demanda que tiene"),
+        ("Accesibilidad", "🟩 Verde", "Bien conectado: cerca de aeropuerto, puerto o "
+         "estación", "🟥 Rojo", "Mal conectado: lejos de cualquier nodo de transporte"),
+    ]
+    lineas_tabla = ["| Indicador | Extremo favorable | Extremo desfavorable |",
+                    "|---|---|---|"]
+    for nombre, _, bueno, _, malo in filas:
+        lineas_tabla.append(f"| **{nombre}** | 🟩 {bueno} | 🟥 {malo} |")
+    st.markdown("\n".join(lineas_tabla))
+
+    st.markdown(
+        f"<div style='background:#fff8c5;border-left:5px solid #bf8700;"
+        f"padding:12px 16px;border-radius:6px;margin:10px 0 4px'>"
+        f"<b>⬜ Gris significa SIN DATO, no saturación baja.</b> Esa comunidad autónoma no "
+        f"publica un registro abierto de viviendas de uso turístico, así que no hay con qué "
+        f"medirla. Confundir «sin dato» con «sin presión turística» convertiría a esos "
+        f"municipios en falsas oportunidades de inversión."
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("<div class='tui-seccion'></div>", unsafe_allow_html=True)
+    st.markdown("#### Qué encontrarás en cada pestaña")
+    guia = [
+        ("🗺️", "Vista principal", "El mapa nacional coloreado por el indicador que elijas."),
+        ("📊", "Rankings", "Los municipios más saturados y los de mayor oportunidad."),
+        ("📋", "Ficha de municipio", "Busca un municipio y consulta su diagnóstico y su "
+         "recomendación."),
+        ("📍", "Detalle geográfico", "Zoom hasta los establecimientos individuales."),
+    ]
+    for col, (icono, titulo, texto) in zip(st.columns(4), guia):
+        col.markdown(
+            f"<div class='tui-tarjeta'><h4>{icono} {titulo}</h4><p>{texto}</p></div>",
+            unsafe_allow_html=True,
+        )
+    st.markdown("<div class='tui-seccion'></div>", unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
 # Aplicación
 # ---------------------------------------------------------------------------
 
-st.title("Inteligencia territorial turística de España")
-st.caption(
-    "Herramienta de apoyo a la gestión de destinos. Identifica zonas saturadas y zonas con "
-    "margen, a nivel municipal."
-)
+aplicar_estilos()
+cabecera()
 
 if not INDICADORES.exists() or not GEOMETRIA.exists():
     st.error(
@@ -624,21 +903,28 @@ if not INDICADORES.exists() or not GEOMETRIA.exists():
     )
     st.stop()
 
+panel_bienvenida()
+
 with st.spinner("Cargando indicadores…"):
     datos = cargar_indicadores()
     geometria = cargar_geometria()
 
 con_registro = int((datos["cobertura_vut"] == "registro").sum())
 con_hotel = int(datos["saturacion_total_1000hab"].notna().sum())
-st.info(
-    f"**{len(datos):,} municipios**. ".replace(",", ".")
-    + f"{con_registro:,} con registro oficial de VUT ".replace(",", ".")
-    + f"({100 * con_registro / len(datos):.0f} %), de los cuales {con_hotel:,} "
-      .replace(",", ".")
-    + "cuentan además con dato hotelero municipal de la EOH. "
-      "El resto aparece como **sin dato**, que no es lo mismo que saturación baja.",
-    icon="ℹ️",
-)
+sin_dato = len(datos) - con_registro
+
+k1, k2, k3, k4 = st.columns(4)
+k1.markdown(tarjeta_kpi(fmt(len(datos)), "Municipios analizados",
+                        "Base territorial del INE"), unsafe_allow_html=True)
+k2.markdown(tarjeta_kpi(fmt(con_registro), "Con registro oficial de VUT",
+                        f"{100 * con_registro / len(datos):.0f} % del total"),
+            unsafe_allow_html=True)
+k3.markdown(tarjeta_kpi(fmt(con_hotel), "Con dato hotelero (EOH)",
+                        "Saturación total calculable", "acento"), unsafe_allow_html=True)
+k4.markdown(tarjeta_kpi(fmt(sin_dato), "Sin registro publicado",
+                        "No es saturación baja", "neutro"), unsafe_allow_html=True)
+
+st.markdown("<div class='tui-seccion'></div>", unsafe_allow_html=True)
 
 tabs = st.tabs(["🗺️ Vista principal", "📊 Rankings", "📋 Ficha de municipio",
                 "📍 Detalle geográfico"])
