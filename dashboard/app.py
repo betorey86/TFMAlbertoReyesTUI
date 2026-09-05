@@ -418,7 +418,79 @@ def insignia_confianza(cobertura: str) -> str:
 # 1. Vista principal
 # ---------------------------------------------------------------------------
 
-def leyenda_contextual(vista: str, conf: dict) -> None:
+def escala_quintiles(serie: pd.Series) -> list[float]:
+    """
+    Cortes de los quintiles de la serie, sin duplicados.
+
+    Se aísla en una función porque la usan tanto el coloreado del mapa como la leyenda, y
+    tienen que coincidir exactamente: si divergieran, la leyenda anunciaría unos tramos y
+    el mapa pintaría otros.
+    """
+    cortes = sorted(set(serie.quantile([0, .2, .4, .6, .8, 1]).tolist()))
+    if len(cortes) < 3:
+        cortes = sorted({serie.min(), serie.max()})
+    if len(cortes) < 2:
+        cortes = [cortes[0], cortes[0] + 1]
+    return cortes
+
+
+def colores_por_tramo(paleta: list[str], n_tramos: int) -> list[str]:
+    """
+    Un color por tramo, repartidos uniformemente a lo largo de la paleta.
+
+    Es lo que distingue una escala por cuantiles de una lineal. `LinearColormap.to_step()`
+    sigue interpolando el color según el valor dentro del rango total, de modo que con una
+    distribución de cola larga los tramos bajos acaparan casi toda la gama: un municipio
+    del cuarto quintil de saturación se pintaba de verde porque su valor absoluto seguía
+    siendo pequeño frente al máximo. Asignando un color por tramo, el color pasa a
+    expresar la posición relativa, que es lo que se quiere comunicar.
+    """
+    if n_tramos <= 1:
+        return [paleta[-1]]
+    rampa = cm.LinearColormap(paleta, vmin=0, vmax=1)
+    # `rgb_hex_str` y no `rampa(...)`: la llamada directa devuelve el color con canal alfa
+    # (#RRGGBBAA) y StepColormap sólo admite seis dígitos.
+    return [rampa.rgb_hex_str(i / (n_tramos - 1)) for i in range(n_tramos)]
+
+
+def escala_mapa(conf: dict, cortes: list[float]) -> cm.StepColormap:
+    """Escala discreta del mapa: un color fijo por tramo de cuantil."""
+    return cm.StepColormap(
+        colores_por_tramo(conf["paleta"], len(cortes) - 1),
+        index=cortes, vmin=min(cortes), vmax=max(cortes),
+    )
+
+
+def tramos_quintiles(vista: str, conf: dict, serie: pd.Series) -> str:
+    """Franja con un bloque por quintil, su color y el rango de valores que abarca."""
+    cortes = escala_quintiles(serie)
+    colores = colores_por_tramo(conf["paleta"], len(cortes) - 1)
+    unidad = "km" if vista == "Accesibilidad" else ""
+
+    bloques = ""
+    for i in range(len(cortes) - 1):
+        desde, hasta = cortes[i], cortes[i + 1]
+        color = colores[i]
+        pct_desde = round(100 * i / (len(cortes) - 1))
+        pct_hasta = round(100 * (i + 1) / (len(cortes) - 1))
+        bloques += (
+            f"<div style='flex:1;text-align:center'>"
+            f"<div style='height:14px;background:{color};border-radius:3px 3px 0 0'></div>"
+            f"<div style='font-size:0.72rem;color:{TEXTO_SUAVE};padding:3px 2px'>"
+            f"{fmt(desde, 1)}–{fmt(hasta, 1)} {unidad}<br>"
+            f"<span style='opacity:.75'>{pct_desde}–{pct_hasta} %</span></div></div>"
+        )
+
+    return (
+        f"<div style='margin-top:10px'>"
+        f"<div style='font-size:0.78rem;color:{TEXTO_SUAVE};margin-bottom:4px'>"
+        f"Tramos por <b>quintiles</b>: cada bloque agrupa a la quinta parte de los "
+        f"municipios con dato. Debajo, el rango de valores y el percentil.</div>"
+        f"<div style='display:flex;gap:3px'>{bloques}</div></div>"
+    )
+
+
+def leyenda_contextual(vista: str, conf: dict, serie: pd.Series | None = None) -> None:
     """
     Leyenda del indicador **activo**, y sólo de ése.
 
@@ -472,7 +544,8 @@ def leyenda_contextual(vista: str, conf: dict) -> None:
         f"<div style='margin-top:8px;padding:9px 14px;border-radius:6px;"
         f"background:{TUI_AZUL};color:#fff;font-size:0.9rem'>"
         f"{'👉' if destacado else 'ℹ️'} {textos['que_buscar']}</div>"
-        f"</div>",
+        + (tramos_quintiles(vista, conf, serie) if serie is not None and len(serie) else "")
+        + f"</div>",
         unsafe_allow_html=True,
     )
 
@@ -497,7 +570,7 @@ def vista_principal(df: pd.DataFrame, geo: dict) -> None:
     datos = df[df["ccaa"].isin(ccaa_sel)] if ccaa_sel else df
     con_dato = datos[datos[columna].notna()]
 
-    leyenda_contextual(vista, conf)
+    leyenda_contextual(vista, conf, con_dato[columna] if not con_dato.empty else None)
     st.caption(conf["ayuda"])
 
     # --- Métricas de cobertura, siempre visibles ---
@@ -527,12 +600,20 @@ def vista_principal(df: pd.DataFrame, geo: dict) -> None:
     # Escala por cuantiles: estos indicadores tienen colas muy largas (hay municipios con
     # 1.500 plazas por 1.000 habitantes y la mediana ronda cero). Una escala lineal dejaría
     # el 99 % del mapa del mismo color.
-    cortes = list(con_dato[columna].quantile([0, .5, .75, .9, .97, .995, 1]).unique())
-    if len(cortes) < 3:
-        cortes = [con_dato[columna].min(), con_dato[columna].max()]
-    escala = cm.LinearColormap(conf["paleta"], vmin=min(cortes), vmax=max(cortes)) \
-        .to_step(index=cortes)
-    escala.caption = conf["etiqueta"]
+    # Quintiles: cada tramo agrupa a la quinta parte de los municipios con dato, de modo
+    # que el color expresa la posición relativa y no el valor absoluto.
+    #
+    # Con cortes concentrados en la cola alta —el reparto anterior era 0-50-75-90-97-99,5—
+    # la mitad de los municipios compartía el color más favorable y sólo el 0,5 % superior
+    # alcanzaba el extremo. El resultado era un mapa casi enteramente verde en el que
+    # destinos notoriamente saturados como Peñíscola o Benidorm no se distinguían de un
+    # pueblo de interior sin oferta.
+    #
+    # Los municipios sin dato quedan fuera del cálculo: `con_dato` ya los excluye, así que
+    # no desplazan los cortes.
+    cortes = escala_quintiles(con_dato[columna])
+    escala = escala_mapa(conf, cortes)
+    escala.caption = f"{conf['etiqueta']} — tramos por quintiles"
 
     valores = dict(zip(con_dato["codigo_ine"], con_dato[columna]))
     visibles = set(datos["codigo_ine"])
