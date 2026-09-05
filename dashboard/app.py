@@ -174,6 +174,49 @@ LEYENDA_INDICADOR = {
 }
 
 
+# Qué mide, cómo se lee y de dónde sale cada indicador. Se muestra junto a la leyenda para
+# que el usuario no tenga que salir del mapa a buscar la definición.
+DESCRIPCION_INDICADOR = {
+    "Saturación":
+        "Mide la <b>presión turística sobre el territorio</b>: plazas turísticas por cada "
+        "1.000 habitantes. Un valor alto indica mucha oferta en relación con la población "
+        "residente, señal de posible sobrecarga. Se calcula sobre el registro oficial de "
+        "viviendas de uso turístico y, donde hay dato fiable de la Encuesta de Ocupación "
+        "Hotelera del INE, también sobre las plazas hoteleras.",
+    "Oportunidad":
+        "Identifica municipios con <b>potencial de inversión</b>: combina baja saturación "
+        "de oferta con presencia de demanda, servicios y buena accesibilidad "
+        "(demanda − saturación). Un valor alto señala margen de oferta en una zona que "
+        "reúne condiciones para atraer turismo. <b>No es lo mismo que poca saturación</b>: "
+        "un municipio sin demanda ni conexión no constituye una oportunidad.",
+    "Accesibilidad":
+        "Mide la <b>conectividad del municipio</b>: distancia en kilómetros al nodo de "
+        "transporte más cercano —aeropuerto, puerto, estación de tren o intercambiador—. "
+        "Un valor bajo indica buena conexión. Es un factor determinante del potencial "
+        "turístico: la mejor oferta pierde valor si el destino resulta difícil de alcanzar.",
+}
+
+# Filtro por tramo. Cada opción indica qué quintiles conserva: los dos superiores, los dos
+# inferiores, o todos. Se apoya en los mismos cortes que colorean el mapa.
+FILTROS_NIVEL = {
+    "Saturación": {
+        "Todos": None,
+        "Solo saturados (tramo alto)": "alto",
+        "Solo con margen (tramo bajo)": "bajo",
+    },
+    "Oportunidad": {
+        "Todos": None,
+        "Solo alto potencial (tramo alto)": "alto",
+        "Solo bajo potencial (tramo bajo)": "bajo",
+    },
+    "Accesibilidad": {
+        "Todos": None,
+        "Solo mal conectados": "alto",
+        "Solo bien conectados": "bajo",
+    },
+}
+
+
 def aplicar_estilos() -> None:
     """Hoja de estilos corporativa. Sólo presentación: no altera ningún dato."""
     st.markdown(
@@ -528,7 +571,11 @@ def leyenda_contextual(vista: str, conf: dict, serie: pd.Series | None = None) -
         f"<div style='font-size:0.82rem;text-transform:uppercase;letter-spacing:0.6px;"
         f"color:{TEXTO_SUAVE};font-weight:700;margin-bottom:6px'>Estás viendo</div>"
         f"<div style='font-size:1.25rem;font-weight:700;color:{TUI_AZUL};"
-        f"margin-bottom:10px'>{vista}</div>"
+        f"margin-bottom:8px'>{vista}</div>"
+        f"<div style='background:#fff;border:1px solid {BORDE};border-left:4px solid "
+        f"{TUI_AZUL};border-radius:6px;padding:11px 15px;margin-bottom:12px;"
+        f"font-size:0.88rem;line-height:1.55;color:{TEXTO}'>"
+        f"{DESCRIPCION_INDICADOR.get(vista, '')}</div>"
         f"<div style='display:flex;gap:10px;flex-wrap:wrap'>"
         f"{celda('primero', color_primero)}"
         f"{celda('ultimo', color_ultimo)}"
@@ -550,10 +597,47 @@ def leyenda_contextual(vista: str, conf: dict, serie: pd.Series | None = None) -
     )
 
 
+def tabla_vista(seleccion: pd.DataFrame, vista: str, conf: dict, columna: str) -> None:
+    """
+    Lista de los municipios que el mapa está mostrando, ordenada por el indicador activo.
+
+    Comparte el marco de datos con el mapa, de modo que ambos responden a los mismos
+    filtros sin posibilidad de desincronizarse.
+    """
+    if seleccion.empty:
+        st.info("Ningún municipio cumple los filtros seleccionados.")
+        return
+
+    # La columna de confianza dice de dónde sale el dato, que en este proyecto es tan
+    # relevante como el propio valor.
+    if vista == "Saturación":
+        confianza = seleccion["base_saturacion"]
+    else:
+        confianza = seleccion["cobertura_vut"].map(
+            lambda c: CONFIANZA.get(c, ("—", ""))[0]
+        )
+
+    tabla = pd.DataFrame({
+        "Municipio": seleccion["nombre"],
+        "Provincia": seleccion["provincia"],
+        conf["etiqueta"]: seleccion[columna].round(2),
+        "Población": seleccion["poblacion"],
+        "Base del dato": confianza,
+    }).sort_values(conf["etiqueta"], ascending=False)
+
+    st.dataframe(
+        tabla, hide_index=True, height=520, width="stretch",
+        column_config={
+            "Población": st.column_config.NumberColumn(format="%d"),
+            conf["etiqueta"]: st.column_config.NumberColumn(format="%.2f"),
+        },
+    )
+
+
 def vista_principal(df: pd.DataFrame, geo: dict) -> None:
     st.markdown("### Mapa nacional")
 
-    izq, der = st.columns([3, 2])
+    izq, cen, der = st.columns([3, 2, 2])
     with izq:
         vista = st.segmented_control(
             "Indicador", list(VISTAS), default="Saturación", key="vista_mapa",
@@ -561,14 +645,37 @@ def vista_principal(df: pd.DataFrame, geo: dict) -> None:
     conf = VISTAS[vista]
     columna = conf["columna"]
 
-    with der:
+    with cen:
         ccaa_sel = st.multiselect(
-            "Filtrar comunidades", sorted(df["ccaa"].dropna().unique()),
+            "Comunidades", sorted(df["ccaa"].dropna().unique()),
             default=[], key="ccaa_mapa", help="Vacío = toda España.",
+        )
+    with der:
+        opciones_nivel = FILTROS_NIVEL[vista]
+        nivel_sel = st.selectbox(
+            "Nivel en el indicador", list(opciones_nivel), key=f"nivel_{vista}",
+            help="Usa los mismos tramos por percentiles que colorean el mapa. Los "
+                 "municipios sin dato quedan siempre fuera de este filtro.",
         )
 
     datos = df[df["ccaa"].isin(ccaa_sel)] if ccaa_sel else df
     con_dato = datos[datos[columna].notna()]
+
+    # --- Filtro por tramo ---
+    # Los cortes se calculan sobre el ámbito ya filtrado por comunidad, de modo que "tramo
+    # alto" significa alto dentro de lo que se está viendo. Se aplica sólo a los municipios
+    # con dato: los que no lo tienen no pertenecen a ningún tramo y siguen en gris.
+    nivel = opciones_nivel[nivel_sel]
+    seleccion = con_dato
+    if nivel and not con_dato.empty:
+        cortes_nivel = escala_quintiles(con_dato[columna])
+        if len(cortes_nivel) >= 3:
+            if nivel == "alto":
+                umbral = cortes_nivel[-3]  # dos quintiles superiores
+                seleccion = con_dato[con_dato[columna] > umbral]
+            else:
+                umbral = cortes_nivel[2]   # dos quintiles inferiores
+                seleccion = con_dato[con_dato[columna] <= umbral]
 
     leyenda_contextual(vista, conf, con_dato[columna] if not con_dato.empty else None)
     st.caption(conf["ayuda"])
@@ -616,7 +723,9 @@ def vista_principal(df: pd.DataFrame, geo: dict) -> None:
     escala.caption = f"{conf['etiqueta']} — tramos por quintiles"
 
     valores = dict(zip(con_dato["codigo_ine"], con_dato[columna]))
-    visibles = set(datos["codigo_ine"])
+    # Con un filtro de nivel activo el mapa muestra sólo los municipios del tramo; sin él,
+    # todo el ámbito, incluidos los que carecen de dato, que se pintan en gris.
+    visibles = set(seleccion["codigo_ine"]) if nivel else set(datos["codigo_ine"])
 
     mapa = folium.Map(location=[40.0, -3.7], zoom_start=6, tiles=TILES_BASE)
 
@@ -705,7 +814,25 @@ def vista_principal(df: pd.DataFrame, geo: dict) -> None:
     ).add_to(mapa)
 
     escala.add_to(mapa)
-    st_folium(mapa, width=None, height=560, returned_objects=[])
+
+    # Mapa y tabla lado a lado, alimentados por la misma selección: así se ve dónde está
+    # el fenómeno y qué municipios lo componen sin cambiar de vista. En pantallas estrechas
+    # Streamlit apila las columnas por sí solo.
+    col_mapa, col_tabla = st.columns([1, 1], gap="medium")
+
+    with col_mapa:
+        st_folium(mapa, width=None, height=560, returned_objects=[])
+
+    with col_tabla:
+        st.markdown(
+            f"<div style='font-weight:700;color:{TUI_AZUL};font-size:1rem;"
+            f"margin-bottom:2px'>Municipios mostrados</div>"
+            f"<div style='color:{TEXTO_SUAVE};font-size:0.83rem;margin-bottom:8px'>"
+            f"{len(seleccion):,} municipios · ordenados por {conf['etiqueta'].lower()}"
+            f"</div>".replace(",", "."),
+            unsafe_allow_html=True,
+        )
+        tabla_vista(seleccion, vista, conf, columna)
 
     # La leyenda de colores ya se muestra sobre el mapa, contextualizada al indicador
     # activo. Aquí sólo quedan los avisos de cobertura por territorio.
