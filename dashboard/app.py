@@ -83,15 +83,13 @@ VISTAS = {
     },
     "Oportunidad": {
         "columna": "indice_oportunidad",
-        # Paleta invertida respecto a los otros dos indicadores a propósito: aquí el color
-        # intenso marca el extremo que el gestor busca, que es el de mayor potencial de
-        # inversión. En saturación y accesibilidad el rojo señala el problema; en
-        # oportunidad señala el objetivo. La leyenda contextual, que sólo muestra el
-        # indicador activo, es la que evita que esa diferencia se preste a confusión.
-        "paleta": ["#1a9850", "#91cf60", "#d9ef8b", "#fee08b", "#fc8d59", "#d73027"],
+        # Verde para el extremo alto, igual que en los otros dos indicadores: el rojo se
+        # reserva en toda la aplicación para señalar el problema. Pintar de rojo la mejor
+        # oportunidad de inversión contradecía la lectura instintiva del color.
+        "paleta": ["#d73027", "#fc8d59", "#fee08b", "#d9ef8b", "#91cf60", "#1a9850"],
         "etiqueta": "Índice de oportunidad (demanda − saturación)",
-        "ayuda": "Cuanto más intenso el color, mayor potencial de inversión: poca oferta "
-                 "pero con demanda, servicios y buena conexión.",
+        "ayuda": "Verde = alto potencial de inversión: poca oferta pero con demanda, "
+                 "servicios y buena conexión. Rojo = ya saturado para la demanda que tiene.",
         "invertir": False,
     },
     "Accesibilidad": {
@@ -158,8 +156,8 @@ LEYENDA_INDICADOR = {
         "ultimo": ("Alto potencial",
                    "Poca oferta pero con demanda, servicios y buena conexión."),
         "destacado": "ultimo",
-        "que_buscar": "Busca el color más intenso: son los municipios con mayor "
-                      "potencial de inversión.",
+        "que_buscar": "Busca el verde intenso: son los municipios con mayor potencial "
+                      "de inversión.",
     },
     "Accesibilidad": {
         "primero": ("Bien conectado",
@@ -541,36 +539,74 @@ def vista_principal(df: pd.DataFrame, geo: dict) -> None:
         return {"fillColor": color, "color": "#ffffff", "weight": 0.25, "fillOpacity": 0.8}
 
     # Cifras del popup, adjuntadas a la geometría.
+    # El contenido del globo cambia con el indicador: mostrar siempre las cifras de
+    # saturación mientras se está mirando accesibilidad obliga a leer un dato que no es el
+    # que se está consultando. Nombre, provincia y confianza permanecen en los tres casos.
     campos = ["nombre", "provincia", "poblacion", "plazas_vut", "plazas_hoteleras",
               "saturacion_efectiva", "base_saturacion", "indice_oportunidad",
-              "dist_transporte_km", "cobertura_vut"]
+              "indice_demanda", "indice_saturacion", "servicios_1000hab",
+              "n_atracciones", "dist_transporte_km", "n_transporte", "cobertura_vut"]
+    campos = [c for c in campos if c in datos.columns]
     tabla = datos.set_index("codigo_ine")[campos].to_dict("index")
+
     for elemento in geo["features"]:
         codigo = elemento["properties"].get("codigo_ine")
         info = tabla.get(codigo)
         p = elemento["properties"]
         if info is None:
             p["_nombre"] = p.get("nombre_municipio", "—")
-            p["_resumen"] = "Fuera de la selección"
+            p["_a"] = p["_b"] = p["_c"] = p["_d"] = "—"
+            p["_confianza"] = "Fuera de la selección"
             continue
+
         p["_nombre"] = f"{info['nombre']} ({info['provincia']})"
-        p["_poblacion"] = fmt(info["poblacion"]) + " hab"
-        p["_vut"] = fmt(info["plazas_vut"]) + " plazas"
-        p["_hotel"] = fmt(info["plazas_hoteleras"]) + " plazas"
-        p["_saturacion"] = (fmt(info["saturacion_efectiva"], 1) + " /1.000 hab"
-                            if pd.notna(info["saturacion_efectiva"]) else "sin dato")
-        p["_base"] = info["base_saturacion"]
-        p["_confianza"] = CONFIANZA.get(info["cobertura_vut"], ("—", ""))[0]
+        p["_poblacion"] = fmt(info.get("poblacion")) + " hab"
+        p["_confianza"] = CONFIANZA.get(info.get("cobertura_vut"), ("—", ""))[0]
+
+        if vista == "Saturación":
+            p["_a"] = fmt(info.get("plazas_vut")) + " plazas"
+            p["_b"] = fmt(info.get("plazas_hoteleras")) + " plazas"
+            p["_c"] = (fmt(info.get("saturacion_efectiva"), 1) + " /1.000 hab"
+                       if pd.notna(info.get("saturacion_efectiva")) else "sin dato")
+            p["_d"] = info.get("base_saturacion", "—")
+        elif vista == "Oportunidad":
+            p["_a"] = (fmt(info.get("indice_oportunidad"), 1)
+                       if pd.notna(info.get("indice_oportunidad")) else "sin dato")
+            p["_b"] = (fmt(info.get("indice_demanda"), 1)
+                       if pd.notna(info.get("indice_demanda")) else "sin dato")
+            p["_c"] = (fmt(info.get("indice_saturacion"), 1)
+                       if pd.notna(info.get("indice_saturacion")) else "sin dato")
+            p["_d"] = (f"{fmt(info.get('servicios_1000hab'), 1)} serv./1.000 hab · "
+                       f"{fmt(info.get('n_atracciones'))} atracciones")
+        else:  # Accesibilidad
+            p["_a"] = (fmt(info.get("dist_transporte_km"), 1) + " km"
+                       if pd.notna(info.get("dist_transporte_km")) else "sin dato")
+            p["_b"] = fmt(info.get("n_transporte")) + " en el término municipal"
+            p["_c"] = p["_d"] = "—"
+
+    ETIQUETAS_POPUP = {
+        "Saturación": ["Población:", "Plazas VUT:", "Plazas hoteleras:", "Saturación:",
+                       "Base del cálculo:", "Confianza del dato:"],
+        "Oportunidad": ["Población:", "Índice de oportunidad:", "Componente demanda:",
+                        "Componente saturación:", "Servicios y recursos:",
+                        "Confianza del dato:"],
+        "Accesibilidad": ["Población:", "Al nodo más cercano:", "Nodos de transporte:",
+                          "Confianza del dato:"],
+    }
+    # Accesibilidad sólo tiene dos datos propios, así que no usa las ranuras _c y _d.
+    if vista == "Accesibilidad":
+        campos_popup = ["_nombre", "_poblacion", "_a", "_b", "_confianza"]
+    else:
+        campos_popup = ["_nombre", "_poblacion", "_a", "_b", "_c", "_d", "_confianza"]
+    alias_popup = [""] + ETIQUETAS_POPUP[vista]
 
     folium.GeoJson(
         geo,
         style_function=estilo,
         highlight_function=lambda _: {"weight": 2, "color": "#111111"},
         tooltip=folium.GeoJsonTooltip(
-            fields=["_nombre", "_poblacion", "_vut", "_hotel", "_saturacion",
-                    "_base", "_confianza"],
-            aliases=["", "Población:", "Plazas VUT:", "Plazas hoteleras:",
-                     "Saturación:", "Base del cálculo:", "Confianza del dato:"],
+            fields=campos_popup,
+            aliases=alias_popup,
             sticky=True,
             labels=True,
         ),
