@@ -83,10 +83,15 @@ VISTAS = {
     },
     "Oportunidad": {
         "columna": "indice_oportunidad",
+        # Paleta invertida respecto a los otros dos indicadores a propósito: aquí el color
+        # intenso marca el extremo que el gestor busca, que es el de mayor potencial de
+        # inversión. En saturación y accesibilidad el rojo señala el problema; en
+        # oportunidad señala el objetivo. La leyenda contextual, que sólo muestra el
+        # indicador activo, es la que evita que esa diferencia se preste a confusión.
+        "paleta": ["#1a9850", "#91cf60", "#d9ef8b", "#fee08b", "#fc8d59", "#d73027"],
         "etiqueta": "Índice de oportunidad (demanda − saturación)",
-        "paleta": ["#d73027", "#fc8d59", "#fee08b", "#d9ef8b", "#91cf60", "#1a9850"],
-        "ayuda": "Verde = demanda alta con saturación baja. Rojo = ya saturado respecto a "
-                 "su demanda.",
+        "ayuda": "Cuanto más intenso el color, mayor potencial de inversión: poca oferta "
+                 "pero con demanda, servicios y buena conexión.",
         "invertir": False,
     },
     "Accesibilidad": {
@@ -134,21 +139,35 @@ BORDE = "#DDE3EA"
 # Lectura en palabras de cada extremo de la escala, por indicador. La clave del rediseño:
 # sin esto, el usuario no sabe si el verde es deseable o indeseable, y la respuesta cambia
 # según el indicador que esté mirando.
+# Cada entrada describe los dos extremos de la escala **en el orden en que los pinta la
+# paleta**: el primero corresponde al primer color y el segundo al último. Que el texto
+# siga al color y no al revés es lo que garantiza que la leyenda no pueda contradecir al
+# mapa cuando una paleta se invierte.
 LEYENDA_INDICADOR = {
     "Saturación": {
-        "bajo": ("Margen disponible", "Poca oferta turística en relación con su población."),
-        "alto": ("Saturado", "Riesgo de sobrecarga: la oferta supera lo que la población absorbe."),
-        "verde_es": "bueno",
+        "primero": ("Margen disponible",
+                    "Poca oferta para su población."),
+        "ultimo": ("Saturado",
+                   "Riesgo de sobrecarga turística."),
+        "destacado": "ultimo",
+        "que_buscar": "El rojo señala los municipios con mayor presión turística.",
     },
     "Oportunidad": {
-        "bajo": ("Sin recorrido", "Ya saturado respecto a la demanda que tiene."),
-        "alto": ("Alto potencial", "Poca oferta pero con demanda, servicios y conexiones."),
-        "verde_es": "bueno",
+        "primero": ("Poco potencial",
+                    "Ya saturado o sin demanda que lo sostenga."),
+        "ultimo": ("Alto potencial",
+                   "Poca oferta pero con demanda, servicios y buena conexión."),
+        "destacado": "ultimo",
+        "que_buscar": "Busca el color más intenso: son los municipios con mayor "
+                      "potencial de inversión.",
     },
     "Accesibilidad": {
-        "bajo": ("Bien conectado", "Cerca de aeropuerto, puerto o estación."),
-        "alto": ("Mal conectado", "Lejos de cualquier nodo de transporte."),
-        "verde_es": "bueno",
+        "primero": ("Bien conectado",
+                    "Cerca de aeropuerto, puerto o estación."),
+        "ultimo": ("Mal conectado",
+                   "Lejos de cualquier nodo de transporte."),
+        "destacado": "ultimo",
+        "que_buscar": "El rojo señala los municipios peor comunicados.",
     },
 }
 
@@ -399,26 +418,52 @@ def insignia_confianza(cobertura: str) -> str:
 
 def leyenda_contextual(vista: str, conf: dict) -> None:
     """
-    Franja que traduce a palabras los extremos de la escala del indicador activo.
+    Leyenda del indicador **activo**, y sólo de ése.
 
-    Se redibuja al cambiar de indicador porque el significado del color cambia con él: el
-    verde es siempre el extremo favorable, pero lo que resulta favorable en saturación
-    (poca oferta) no es lo mismo que en accesibilidad (poca distancia).
+    Mostrar los tres a la vez obligaba al lector a averiguar cuál le aplicaba, y como el
+    color favorable no es el mismo en los tres —lo deseable en saturación es poca oferta,
+    en accesibilidad poca distancia y en oportunidad mucho margen—, la comparación
+    simultánea inducía justo el error que la leyenda debe evitar. Este bloque se reescribe
+    entero al cambiar de indicador.
+
+    Los colores se leen de la propia paleta del mapa, de modo que si una paleta se invierte
+    la leyenda la sigue automáticamente y no puede quedar desfasada.
     """
     textos = LEYENDA_INDICADOR[vista]
-    bajo_tit, bajo_txt = textos["bajo"]
-    alto_tit, alto_txt = textos["alto"]
-    verde, rojo = conf["paleta"][0], conf["paleta"][-1]
+    color_primero, color_ultimo = conf["paleta"][0], conf["paleta"][-1]
+    destacado = textos["destacado"]
+
+    def celda(clave: str, color: str) -> str:
+        titulo, detalle = textos[clave]
+        resalte = (f"border:2px solid {TUI_AZUL};background:#F0F4F9;"
+                   if clave == destacado else f"border:1px solid {BORDE};background:#fff;")
+        marca = " ⭐" if clave == destacado else ""
+        return (
+            f"<div style='flex:1;padding:12px 14px;border-radius:6px;{resalte}'>"
+            f"<span class='muestra' style='background:{color};width:15px;height:15px'></span>"
+            f"<b>{titulo}</b>{marca}<br>"
+            f"<span style='color:{TEXTO_SUAVE};font-size:0.85rem'>{detalle}</span></div>"
+        )
 
     st.markdown(
-        f"<div class='tui-leyenda'>"
-        f"<div><span class='muestra' style='background:{verde}'></span>"
-        f"<b>{bajo_tit}</b><br><span style='color:{TEXTO_SUAVE}'>{bajo_txt}</span></div>"
-        f"<div><span class='muestra' style='background:{rojo}'></span>"
-        f"<b>{alto_tit}</b><br><span style='color:{TEXTO_SUAVE}'>{alto_txt}</span></div>"
-        f"<div><span class='muestra' style='background:{COLOR_SIN_DATO}'></span>"
-        f"<b>Sin dato</b><br><span style='color:{TEXTO_SUAVE}'>La comunidad no publica "
-        f"registro. No es saturación baja.</span></div>"
+        f"<div style='margin:10px 0 4px'>"
+        f"<div style='font-size:0.82rem;text-transform:uppercase;letter-spacing:0.6px;"
+        f"color:{TEXTO_SUAVE};font-weight:700;margin-bottom:6px'>Estás viendo</div>"
+        f"<div style='font-size:1.25rem;font-weight:700;color:{TUI_AZUL};"
+        f"margin-bottom:10px'>{vista}</div>"
+        f"<div style='display:flex;gap:10px;flex-wrap:wrap'>"
+        f"{celda('primero', color_primero)}"
+        f"{celda('ultimo', color_ultimo)}"
+        f"<div style='flex:1;padding:12px 14px;border-radius:6px;"
+        f"border:1px solid {BORDE};background:#fff'>"
+        f"<span class='muestra' style='background:{COLOR_SIN_DATO};width:15px;height:15px'>"
+        f"</span><b>Sin dato</b><br>"
+        f"<span style='color:{TEXTO_SUAVE};font-size:0.85rem'>La comunidad no publica "
+        f"registro. <b>No es saturación baja.</b></span></div>"
+        f"</div>"
+        f"<div style='margin-top:8px;padding:9px 14px;border-radius:6px;"
+        f"background:{TUI_AZUL};color:#fff;font-size:0.9rem'>"
+        f"👉 {textos['que_buscar']}</div>"
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -836,27 +881,9 @@ def panel_bienvenida() -> None:
         )
 
     st.markdown("<div class='tui-seccion'></div>", unsafe_allow_html=True)
-    st.markdown("#### Cómo leer los colores del mapa")
-    st.caption(
-        "El significado del color depende del indicador que estés viendo. Esta es la "
-        "equivalencia en los tres casos."
-    )
-
-    filas = [
-        ("Saturación", "🟩 Verde", "Margen disponible: poca oferta para su población",
-         "🟥 Rojo", "Saturado: riesgo de sobrecarga turística"),
-        ("Oportunidad", "🟩 Verde", "Alto potencial: poca oferta pero con demanda, "
-         "servicios y buena conexión", "🟥 Rojo", "Sin recorrido: ya saturado para la "
-         "demanda que tiene"),
-        ("Accesibilidad", "🟩 Verde", "Bien conectado: cerca de aeropuerto, puerto o "
-         "estación", "🟥 Rojo", "Mal conectado: lejos de cualquier nodo de transporte"),
-    ]
-    lineas_tabla = ["| Indicador | Extremo favorable | Extremo desfavorable |",
-                    "|---|---|---|"]
-    for nombre, _, bueno, _, malo in filas:
-        lineas_tabla.append(f"| **{nombre}** | 🟩 {bueno} | 🟥 {malo} |")
-    st.markdown("\n".join(lineas_tabla))
-
+    # La explicación del color ya no vive aquí. Mostrar los tres indicadores a la vez
+    # obligaba a averiguar cuál aplicaba y confundía, así que la leyenda se ha trasladado
+    # junto al selector del mapa, donde se muestra únicamente la del indicador activo.
     st.markdown(
         f"<div style='background:#fff8c5;border-left:5px solid #bf8700;"
         f"padding:12px 16px;border-radius:6px;margin:10px 0 4px'>"

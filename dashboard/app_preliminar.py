@@ -416,7 +416,9 @@ if galicia_total and "vut" in capas_visibles:
 
 st.subheader(f"Mapa · {total_pintados:,}".replace(",", ".") + " puntos representados")
 
-mapa = folium.Map(location=[40.0, -3.7], zoom_start=6, tiles="cartodbpositron")
+mapa = folium.Map(location=[40.0, -3.7], zoom_start=6, # El tileset de CARTO exige clave de API en producción y, sin ella, sirve teselas
+# con la marca de agua "API KEY REQUIRED". Se usa el estándar de OpenStreetMap.
+                       tiles="OpenStreetMap")
 
 
 def callback_marcador(color: str) -> str:
