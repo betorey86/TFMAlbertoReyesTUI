@@ -597,17 +597,14 @@ def leyenda_contextual(vista: str, conf: dict, serie: pd.Series | None = None) -
     )
 
 
-def tabla_vista(seleccion: pd.DataFrame, vista: str, conf: dict, columna: str) -> None:
+def preparar_tabla(seleccion: pd.DataFrame, vista: str, conf: dict,
+                   columna: str) -> tuple[pd.DataFrame, list[str]]:
     """
-    Lista de los municipios que el mapa está mostrando, ordenada por el indicador activo.
+    Construye la tabla de municipios y la lista de códigos INE en el mismo orden.
 
-    Comparte el marco de datos con el mapa, de modo que ambos responden a los mismos
-    filtros sin posibilidad de desincronizarse.
+    Devolver ambas cosas juntas es lo que permite traducir la fila que el usuario clica
+    —que Streamlit identifica por su posición— al municipio concreto que representa.
     """
-    if seleccion.empty:
-        st.info("Ningún municipio cumple los filtros seleccionados.")
-        return
-
     # La columna de confianza dice de dónde sale el dato, que en este proyecto es tan
     # relevante como el propio valor.
     if vista == "Saturación":
@@ -618,6 +615,7 @@ def tabla_vista(seleccion: pd.DataFrame, vista: str, conf: dict, columna: str) -
         )
 
     tabla = pd.DataFrame({
+        "codigo_ine": seleccion["codigo_ine"],
         "Municipio": seleccion["nombre"],
         "Provincia": seleccion["provincia"],
         conf["etiqueta"]: seleccion[columna].round(2),
@@ -625,13 +623,8 @@ def tabla_vista(seleccion: pd.DataFrame, vista: str, conf: dict, columna: str) -
         "Base del dato": confianza,
     }).sort_values(conf["etiqueta"], ascending=False)
 
-    st.dataframe(
-        tabla, hide_index=True, height=520, width="stretch",
-        column_config={
-            "Población": st.column_config.NumberColumn(format="%d"),
-            conf["etiqueta"]: st.column_config.NumberColumn(format="%.2f"),
-        },
-    )
+    codigos = tabla["codigo_ine"].tolist()
+    return tabla.drop(columns="codigo_ine"), codigos
 
 
 def vista_principal(df: pd.DataFrame, geo: dict) -> None:
@@ -724,12 +717,48 @@ def vista_principal(df: pd.DataFrame, geo: dict) -> None:
     cortes = escala_quintiles(con_dato[columna])
     escala = escala_mapa(conf, cortes)
 
+    # --- Selección de fila en la tabla ---
+    #
+    # La tabla se dibuja a la derecha del mapa, pero su selección tiene que conocerse
+    # antes de construirlo. Streamlit resuelve esto por sí solo: `on_select="rerun"`
+    # provoca una nueva ejecución y el estado del widget queda disponible desde el
+    # principio, así que aquí se lee de `session_state` lo que el usuario clicó en la
+    # pasada anterior.
+    #
+    # La clave incluye la firma de los filtros. Streamlit identifica la fila por su
+    # posición, de modo que si cambiaran los filtros conservando la clave, el índice
+    # guardado apuntaría a un municipio distinto sin que nada fallara. Al variar la clave,
+    # el widget se recrea y la selección se descarta.
+    tabla, codigos_tabla = preparar_tabla(seleccion, vista, conf, columna)
+    firma = f"{vista}|{nivel_sel}|{'-'.join(sorted(ccaa_sel))}|{len(seleccion)}"
+    clave_tabla = f"tabla_vista_{firma}"
+
+    estado = st.session_state.get(clave_tabla)
+    filas_sel = []
+    if estado is not None:
+        filas_sel = getattr(getattr(estado, "selection", None), "rows", None) or \
+                    (estado.get("selection", {}).get("rows", []) if isinstance(estado, dict) else [])
+
+    codigo_activo = None
+    if filas_sel and 0 <= filas_sel[0] < len(codigos_tabla):
+        codigo_activo = codigos_tabla[filas_sel[0]]
+
     valores = dict(zip(con_dato["codigo_ine"], con_dato[columna]))
     # Con un filtro de nivel activo el mapa muestra sólo los municipios del tramo; sin él,
     # todo el ámbito, incluidos los que carecen de dato, que se pintan en gris.
     visibles = set(seleccion["codigo_ine"]) if nivel else set(datos["codigo_ine"])
 
-    mapa = folium.Map(location=[40.0, -3.7], zoom_start=6, tiles=TILES_BASE)
+    # Con un municipio elegido en la tabla, el mapa se centra en su centroide y se acerca;
+    # sin selección, mantiene la vista general.
+    centro, zoom = [40.0, -3.7], 6
+    if codigo_activo:
+        fila_activa = seleccion[seleccion["codigo_ine"] == codigo_activo]
+        if not fila_activa.empty and pd.notna(fila_activa.iloc[0]["lat_centro"]):
+            centro = [float(fila_activa.iloc[0]["lat_centro"]),
+                      float(fila_activa.iloc[0]["lon_centro"])]
+            zoom = 11
+
+    mapa = folium.Map(location=centro, zoom_start=zoom, tiles=TILES_BASE)
 
     def estilo(elemento):
         codigo = elemento["properties"].get("codigo_ine")
@@ -738,6 +767,11 @@ def vista_principal(df: pd.DataFrame, geo: dict) -> None:
         valor = valores.get(codigo)
         # El "sin dato" tiene su propio color y jamás entra en la escala verde-rojo.
         color = COLOR_SIN_DATO if valor is None or pd.isna(valor) else escala(valor)
+        if codigo == codigo_activo:
+            # El municipio seleccionado conserva su color de indicador y se distingue por
+            # un contorno grueso en el azul corporativo.
+            return {"fillColor": color, "color": TUI_AZUL, "weight": 3.5,
+                    "fillOpacity": 0.9}
         return {"fillColor": color, "color": "#ffffff", "weight": 0.25, "fillOpacity": 0.8}
 
     # Cifras del popup, adjuntadas a la geometría.
@@ -749,11 +783,12 @@ def vista_principal(df: pd.DataFrame, geo: dict) -> None:
               "indice_demanda", "indice_saturacion", "servicios_1000hab",
               "n_atracciones", "dist_transporte_km", "n_transporte", "cobertura_vut"]
     campos = [c for c in campos if c in datos.columns]
-    tabla = datos.set_index("codigo_ine")[campos].to_dict("index")
+    # Nombre propio: `tabla` designa el marco que alimenta la lista de municipios.
+    datos_popup = datos.set_index("codigo_ine")[campos].to_dict("index")
 
     for elemento in geo["features"]:
         codigo = elemento["properties"].get("codigo_ine")
-        info = tabla.get(codigo)
+        info = datos_popup.get(codigo)
         p = elemento["properties"]
         if info is None:
             p["_nombre"] = p.get("nombre_municipio", "—")
@@ -821,18 +856,49 @@ def vista_principal(df: pd.DataFrame, geo: dict) -> None:
     col_mapa, col_tabla = st.columns([1, 1], gap="medium")
 
     with col_mapa:
-        st_folium(mapa, width=None, height=560, returned_objects=[])
+        if codigo_activo:
+            fila_activa = seleccion[seleccion["codigo_ine"] == codigo_activo]
+            if not fila_activa.empty:
+                f = fila_activa.iloc[0]
+                st.markdown(
+                    f"<div style='background:{TUI_AZUL};color:#fff;padding:8px 14px;"
+                    f"border-radius:6px;margin-bottom:8px;font-size:0.9rem'>"
+                    f"📍 <b>{f['nombre']}</b> ({f['provincia']}) · "
+                    f"{conf['etiqueta']}: <b>{fmt(f[columna], 2)}</b>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+        # `key` fijo para el mapa: sin él, st_folium reinicia la vista en cada rerun y el
+        # zoom sobre el municipio elegido se perdería al instante.
+        st_folium(mapa, width=None, height=560, returned_objects=[],
+                  key=f"mapa_{firma}_{codigo_activo or 'general'}")
 
     with col_tabla:
         st.markdown(
             f"<div style='font-weight:700;color:{TUI_AZUL};font-size:1rem;"
             f"margin-bottom:2px'>Municipios mostrados</div>"
             f"<div style='color:{TEXTO_SUAVE};font-size:0.83rem;margin-bottom:8px'>"
-            f"{len(seleccion):,} municipios · ordenados por {conf['etiqueta'].lower()}"
+            f"{len(seleccion):,} municipios · ordenados por {conf['etiqueta'].lower()} · "
+            f"<b>clica una fila para localizarlo en el mapa</b>"
             f"</div>".replace(",", "."),
             unsafe_allow_html=True,
         )
-        tabla_vista(seleccion, vista, conf, columna)
+        if seleccion.empty:
+            st.info("Ningún municipio cumple los filtros seleccionados.")
+        else:
+            st.dataframe(
+                tabla, hide_index=True, height=496, width="stretch",
+                key=clave_tabla, on_select="rerun", selection_mode="single-row",
+                column_config={
+                    "Población": st.column_config.NumberColumn(format="%d"),
+                    conf["etiqueta"]: st.column_config.NumberColumn(format="%.2f"),
+                },
+            )
+            if codigo_activo:
+                if st.button("Volver a la vista general", width="stretch"):
+                    # Vaciar la selección del widget devuelve el mapa a su encuadre inicial.
+                    st.session_state.pop(clave_tabla, None)
+                    st.rerun()
 
     # La leyenda de colores ya se muestra sobre el mapa, contextualizada al indicador
     # activo. Aquí sólo quedan los avisos de cobertura por territorio.
