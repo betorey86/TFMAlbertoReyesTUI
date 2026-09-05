@@ -234,26 +234,22 @@ def aplicar_estilos() -> None:
         .tui-cabecera {{
             background: {TUI_AZUL};
             border-radius: 8px;
-            padding: 22px 28px;
+            padding: 24px 30px;
             margin-bottom: 22px;
-            display: flex; align-items: center; gap: 20px;
         }}
         .tui-cabecera h1 {{
             color: #fff; font-size: 1.85rem; font-weight: 700;
             margin: 0; letter-spacing: -0.3px; line-height: 1.2;
         }}
         .tui-cabecera p {{
-            color: #B9C7D8; margin: 6px 0 0; font-size: 0.95rem;
+            color: #B9C7D8; margin: 7px 0 0; font-size: 0.95rem;
         }}
-        /* Hueco reservado para el logotipo corporativo. Sustituir el bloque .tui-logo
-           por <img src="..."> cuando se disponga del archivo. */
-        .tui-logo {{
-            width: 62px; height: 62px; border-radius: 8px; flex-shrink: 0;
-            background: rgba(255,255,255,0.12);
-            border: 1px dashed rgba(255,255,255,0.35);
-            display: flex; align-items: center; justify-content: center;
-            color: rgba(255,255,255,0.55); font-size: 0.62rem; text-align: center;
-            font-weight: 600; letter-spacing: 0.5px;
+        /* Atribución: legible sobre el azul pero claramente por debajo del subtítulo,
+           para que no compita con el título. */
+        .tui-cabecera .tui-atribucion {{
+            color: rgba(255,255,255,0.55); font-size: 0.8rem; margin-top: 10px;
+            padding-top: 9px; border-top: 1px solid rgba(255,255,255,0.15);
+            letter-spacing: 0.2px;
         }}
 
         /* Tarjetas */
@@ -326,12 +322,12 @@ def cabecera() -> None:
     st.markdown(
         f"""
         <div class="tui-cabecera">
-          <!-- Hueco para el logotipo corporativo: sustituir por <img src="assets/logo.svg"> -->
-          <div class="tui-logo">LOGO</div>
-          <div>
-            <h1>Inteligencia Territorial Turística de España</h1>
-            <p>Saturación y oportunidad de inversión, municipio a municipio ·
-               Herramienta de apoyo a la gestión de destinos</p>
+          <h1>Inteligencia Territorial Turística de España</h1>
+          <p>Saturación y oportunidad de inversión, municipio a municipio ·
+             Herramienta de apoyo a la gestión de destinos</p>
+          <div class="tui-atribucion">
+            Trabajo de Fin de Máster · Proyecto basado en un challenge de
+            TUI Care Foundation
           </div>
         </div>
         """,
