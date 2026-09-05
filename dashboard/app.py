@@ -347,6 +347,39 @@ def tarjeta_kpi(valor: str, etiqueta: str, nota: str = "", estilo: str = "") -> 
 # Carga
 # ---------------------------------------------------------------------------
 
+# --- Refinamiento de la lectura de la oportunidad ---
+#
+# El índice base no se toca: se enriquece con dos clasificaciones que distinguen
+# situaciones que la fórmula, por construcción, no puede separar.
+#
+# Con cero plazas registradas la saturación cae siempre al suelo del percentil, de modo
+# que `oportunidad = demanda − constante`: el ranking pasa a ser el de demanda entre los
+# municipios sin oferta. Y la demanda se apoya sobre todo en los servicios por habitante,
+# que con poblaciones diminutas se disparan —Tollos tiene 32 habitantes y 3 servicios, lo
+# que da 93,75 por cada mil—. Ninguna de las dos cosas es un error del cálculo, pero ambas
+# exigen advertirse antes de leer el resultado como una recomendación de inversión.
+
+# Plazas por debajo de las cuales se considera que no hay mercado que ampliar.
+UMBRAL_OFERTA_MINIMA = 10
+
+# Población por debajo de la cual el indicador se apoya en un denominador demasiado
+# pequeño. Se elige 500 porque es donde la mediana de servicios por habitante deja de
+# crecer de forma abrupta (10,2 por debajo de 200 hab; 7,7 entre 200 y 500; 4,9 entre 500
+# y 1.000; y ya sin saltos a partir de ahí). Marca al 15 % de los municipios.
+UMBRAL_POBLACION_FIABLE = 500
+
+TIPOS_OPORTUNIDAD = {
+    "crecimiento": ("Oportunidad de crecimiento",
+                    "Existe oferta turística y margen para ampliarla: hay mercado.",
+                    "#1a7f37"),
+    "creacion": ("Oportunidad de creación desde cero",
+                 "Sin oferta registrada, pero con señales de demanda y accesibilidad. "
+                 "Implica crear mercado donde no lo hay: mayor riesgo y una decisión "
+                 "estratégica distinta.",
+                 "#0969da"),
+}
+
+
 @st.cache_data(show_spinner=False)
 def cargar_indicadores() -> pd.DataFrame:
     df = pd.read_csv(INDICADORES, dtype={"codigo_ine": str})
@@ -361,6 +394,21 @@ def cargar_indicadores() -> pd.DataFrame:
         df["saturacion_total_1000hab"].notna(), "VUT + hotelera",
         np.where(df["saturacion_plazas_1000hab"].notna(), "sólo VUT", "sin dato"),
     )
+
+    # --- Clasificación de la oportunidad ---
+    plazas = pd.to_numeric(df["plazas_vut"], errors="coerce").fillna(0)
+    hoteleras = pd.to_numeric(df.get("plazas_hoteleras"), errors="coerce").fillna(0)
+    oferta = plazas + hoteleras
+    df["oferta_total_plazas"] = oferta
+
+    df["tipo_oportunidad"] = np.where(
+        df["indice_oportunidad"].isna(), None,
+        np.where(oferta > UMBRAL_OFERTA_MINIMA, "crecimiento", "creacion"),
+    )
+
+    # Señal débil: el indicador se sostiene sobre un denominador demasiado pequeño para
+    # ser estable. No se excluye a estos municipios, se advierte de ellos.
+    df["senal_debil"] = df["poblacion"] < UMBRAL_POBLACION_FIABLE
     return df
 
 
@@ -1088,20 +1136,43 @@ def alertas(df: pd.DataFrame) -> None:
             "etiquetas": ["Plazas / 1.000 hab", "Percentil"],
         },
         {
-            "clave": "oportunidad",
-            "titulo": "🟢 Oportunidad destacada",
+            "clave": "crecimiento",
+            "titulo": "🟢 Oportunidad de crecimiento",
             "color": "#1a7f37",
-            "explica": "Demanda, servicios y conectividad por encima de la media con una "
-                       "oferta reglada comparativamente baja. Potencial infrautilizado.",
-            "filtro": lambda d: d[d["p_oportunidad"] > P_ALERTA],
+            "explica": "Municipios con oferta turística ya existente y margen para "
+                       "ampliarla: hay mercado que escalar. Es la categoría con menor "
+                       "riesgo de las dos de oportunidad.",
+            "filtro": lambda d: d[(d["p_oportunidad"] > P_ALERTA)
+                                  & (d["tipo_oportunidad"] == "crecimiento")],
             "orden": "p_oportunidad",
             "motivo": lambda f: (
                 f"Índice de oportunidad de {fmt(f['indice_oportunidad'], 1)} "
-                f"(percentil {fmt(f['p_oportunidad'], 0)}), con una saturación en el "
-                f"percentil {fmt(f['p_saturacion'], 0)}."
+                f"(percentil {fmt(f['p_oportunidad'], 0)}) con "
+                f"{fmt(f['oferta_total_plazas'], 0)} plazas ya registradas."
             ),
-            "columnas": ["indice_oportunidad", "p_oportunidad", "saturacion_efectiva"],
-            "etiquetas": ["Índice oportunidad", "Percentil", "Plazas / 1.000 hab"],
+            "columnas": ["indice_oportunidad", "p_oportunidad", "oferta_total_plazas"],
+            "etiquetas": ["Índice oportunidad", "Percentil", "Plazas actuales"],
+        },
+        {
+            "clave": "creacion",
+            "titulo": "🔵 Oportunidad de creación desde cero",
+            "color": "#0969da",
+            "explica": "Municipios sin oferta registrada pero con señales de demanda, "
+                       "servicios y accesibilidad. Supone crear mercado donde no lo hay: "
+                       "mayor riesgo y una decisión estratégica distinta a la de ampliar "
+                       "una oferta existente.",
+            "filtro": lambda d: d[(d["p_oportunidad"] > P_ALERTA)
+                                  & (d["tipo_oportunidad"] == "creacion")],
+            "orden": "p_oportunidad",
+            "motivo": lambda f: (
+                f"Índice de oportunidad de {fmt(f['indice_oportunidad'], 1)} "
+                f"(percentil {fmt(f['p_oportunidad'], 0)}) sin oferta registrada"
+                + (". Señal débil: población por debajo de "
+                   f"{UMBRAL_POBLACION_FIABLE} habitantes."
+                   if f["senal_debil"] else ".")
+            ),
+            "columnas": ["indice_oportunidad", "p_oportunidad", "oferta_total_plazas"],
+            "etiquetas": ["Índice oportunidad", "Percentil", "Plazas actuales"],
         },
         {
             "clave": "combinada",
@@ -1123,7 +1194,22 @@ def alertas(df: pd.DataFrame) -> None:
         },
     ]
 
-    resumen = st.columns(3)
+    st.markdown(
+        f"<div style='background:#fff;border:1px solid {BORDE};border-left:4px solid "
+        f"{TUI_AZUL};border-radius:6px;padding:11px 15px;margin-bottom:14px;"
+        f"font-size:0.88rem;line-height:1.55'>"
+        f"<b>Sobre la oportunidad.</b> Se separa en dos categorías porque la fórmula no "
+        f"puede distinguirlas: un municipio sin oferta registrada obtiene siempre la "
+        f"saturación mínima, de modo que su índice equivale a su demanda. Ampliar una "
+        f"oferta que ya funciona y crearla donde no existe son decisiones de riesgo "
+        f"distinto. Además se marca como <b>señal débil</b> a los municipios de menos de "
+        f"{UMBRAL_POBLACION_FIABLE} habitantes: sus indicadores por habitante se apoyan en "
+        f"un denominador tan pequeño que basta un bar para situarlos en el percentil más "
+        f"alto del país.</div>",
+        unsafe_allow_html=True,
+    )
+
+    resumen = st.columns(len(categorias))
     conteos = {}
     for col, cat in zip(resumen, categorias):
         n = len(cat["filtro"](ambito).dropna(subset=[cat["orden"]]))
@@ -1155,11 +1241,21 @@ def alertas(df: pd.DataFrame) -> None:
             st.info("Ningún municipio cumple esta condición en el ámbito seleccionado.")
             continue
 
+        debiles = int(sub["senal_debil"].sum())
+        if debiles:
+            st.caption(
+                f"⚠️ {debiles} de estos {len(sub)} municipios tienen menos de "
+                f"{UMBRAL_POBLACION_FIABLE} habitantes: su indicador puede estar inflado "
+                f"por el efecto del denominador. Aparecen marcados en la columna "
+                f"«Fiabilidad»."
+            )
+
         tabla = pd.DataFrame({
             "Municipio": sub["nombre"],
             "Provincia": sub["provincia"],
             **{et: sub[c].round(2) for c, et in zip(cat["columnas"], cat["etiquetas"])},
             "Población": sub["poblacion"],
+            "Fiabilidad": np.where(sub["senal_debil"], "⚠️ Señal débil", "Normal"),
             "Base del dato": sub["base_saturacion"],
             "Confianza": sub["cobertura_vut"].map(
                 lambda c: CONFIANZA.get(c, ("—", ""))[0]),
@@ -1364,6 +1460,27 @@ def ficha_municipio(df: pd.DataFrame) -> None:
                 unsafe_allow_html=True)
     if fila["ccaa"] in NOTAS_COBERTURA:
         st.caption(NOTAS_COBERTURA[fila["ccaa"]])
+
+    # Matices de la oportunidad: tipo y fiabilidad del denominador.
+    if pd.notna(fila.get("indice_oportunidad")):
+        tipo = fila.get("tipo_oportunidad")
+        if tipo in TIPOS_OPORTUNIDAD:
+            titulo_t, texto_t, color_t = TIPOS_OPORTUNIDAD[tipo]
+            st.markdown(
+                f"<div style='background:#fff;border:1px solid {BORDE};border-left:4px "
+                f"solid {color_t};border-radius:6px;padding:10px 14px;margin:8px 0;"
+                f"font-size:0.88rem'><b style='color:{color_t}'>{titulo_t}</b><br>"
+                f"<span style='color:{TEXTO_SUAVE}'>{texto_t}</span></div>",
+                unsafe_allow_html=True,
+            )
+    if fila.get("senal_debil"):
+        st.warning(
+            f"**Señal débil.** Con {fmt(fila['poblacion'])} habitantes, los indicadores "
+            f"por habitante de este municipio se apoyan en un denominador muy pequeño: "
+            f"basta un establecimiento para desplazarlo varios percentiles. Léelos como "
+            f"orientación, no como medida estable.",
+            icon="⚠️",
+        )
 
     _lectura_automatica(fila, df)
 

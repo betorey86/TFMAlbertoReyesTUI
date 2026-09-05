@@ -230,9 +230,21 @@ def evaluar(fila: pd.Series, df: pd.DataFrame) -> Recomendacion:
 
     if p_saturacion is not None and p_saturacion < P_SATURACION_MEDIA:
         if buena_accesibilidad and (buenos_servicios or hay_atracciones):
+            # Ampliar una oferta existente y crearla donde no la hay son decisiones de
+            # riesgo distinto, aunque el índice las puntúe igual.
+            oferta = fila.get("oferta_total_plazas")
+            desde_cero = pd.isna(oferta) or float(oferta) <= 10
+            matiz = (
+                " Al no existir oferta registrada, se trataría de **crear mercado desde "
+                "cero**, decisión de mayor riesgo que ampliar una oferta ya en marcha."
+                if desde_cero else
+                " El municipio ya cuenta con oferta en funcionamiento, de modo que se "
+                "trataría de **ampliar un mercado existente**."
+            )
             return Recomendacion(
                 categoria="oportunidad",
-                titulo="Oportunidad de desarrollo",
+                titulo=("Oportunidad de creación desde cero" if desde_cero
+                        else "Oportunidad de crecimiento"),
                 diagnostico=(
                     f"La saturación se sitúa en el percentil {_fmt(p_saturacion, 0)}, por "
                     "debajo de la media, mientras que la accesibilidad y la dotación de "
@@ -242,9 +254,14 @@ def evaluar(fila: pd.Series, df: pd.DataFrame) -> Recomendacion:
                 recomendacion=(
                     "**Demanda potencial infrautilizada.** El territorio admite desarrollo de "
                     "oferta de alojamiento. Conviene verificar que la baja saturación no "
-                    "responde a limitaciones normativas o de suelo antes de promover inversión."
+                    "responde a limitaciones normativas o de suelo antes de promover "
+                    "inversión." + matiz
                 ),
-                confianza="alta" if base == "VUT + hotelera" else "media",
+                # Sin oferta previa la saturación cae al suelo del percentil por
+                # construcción, de modo que el índice mide sólo demanda: la lectura es
+                # más frágil y así se refleja en la confianza.
+                confianza=("media" if desde_cero else
+                           "alta" if base == "VUT + hotelera" else "media"),
                 evidencias=evidencias,
                 avisos=avisos,
             )
