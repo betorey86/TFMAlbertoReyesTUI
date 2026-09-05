@@ -1023,6 +1023,329 @@ def _lectura_automatica(fila: pd.Series, df: pd.DataFrame) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Alertas
+# ---------------------------------------------------------------------------
+
+# Percentil a partir del cual una situación se considera destacable.
+P_ALERTA = 90
+# Para la alerta combinada se usa un umbral algo más bajo en cada eje: lo que la hace
+# relevante es la coincidencia de los dos factores, no que cada uno sea extremo.
+P_ALERTA_COMBINADA = 75
+
+
+def alertas(df: pd.DataFrame) -> None:
+    st.markdown("### Alertas territoriales")
+    st.caption(
+        "Municipios que cumplen condiciones de riesgo u oportunidad destacable según los "
+        "indicadores calculados. Los umbrales son percentiles sobre el conjunto de "
+        "municipios con dato."
+    )
+
+    st.markdown(
+        f"<div style='background:#fff8c5;border-left:5px solid #bf8700;"
+        f"padding:11px 15px;border-radius:6px;margin:8px 0 16px;font-size:0.9rem'>"
+        f"<b>Las alertas sólo se calculan sobre municipios con dato fiable.</b> Quedan "
+        f"fuera los {int((df['origen_vut'] == 'sin_dato').sum()):,} municipios cuya "
+        f"comunidad no publica registro de viviendas de uso turístico y los que miden otra "
+        f"magnitud. Su ausencia en esta lista no significa que no tengan presión "
+        f"turística: significa que no hay con qué medirla.".replace(",", ".")
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    ccaa_sel = st.multiselect(
+        "Filtrar comunidades", sorted(df["ccaa"].dropna().unique()),
+        default=[], key="ccaa_alertas", help="Vacío = toda España.",
+    )
+
+    # Los percentiles se calculan siempre sobre el conjunto nacional con dato: una alerta
+    # de saturación crítica debe significar lo mismo en Galicia que en Andalucía. El filtro
+    # de comunidad se aplica después, sólo para mostrar.
+    fiable = (df["origen_vut"] != "sin_dato") & (df["cobertura_vut"] != "no_comparable")
+    base = df[fiable].copy()
+    base["p_saturacion"] = base["saturacion_efectiva"].rank(pct=True) * 100
+    base["p_oportunidad"] = base["indice_oportunidad"].rank(pct=True) * 100
+    base["p_distancia"] = base["dist_transporte_km"].rank(pct=True) * 100
+
+    ambito = base[base["ccaa"].isin(ccaa_sel)] if ccaa_sel else base
+
+    categorias = [
+        {
+            "clave": "critica",
+            "titulo": "🔴 Saturación crítica",
+            "color": "#d73027",
+            "explica": "Oferta turística en el tramo más alto del país en relación con su "
+                       "población residente. Riesgo de sobrecarga sobre servicios y "
+                       "vivienda.",
+            "filtro": lambda d: d[d["p_saturacion"] > P_ALERTA],
+            "orden": "p_saturacion",
+            "motivo": lambda f: (
+                f"Saturación de {fmt(f['saturacion_efectiva'], 1)} plazas por 1.000 "
+                f"habitantes (percentil {fmt(f['p_saturacion'], 0)})."
+            ),
+            "columnas": ["saturacion_efectiva", "p_saturacion"],
+            "etiquetas": ["Plazas / 1.000 hab", "Percentil"],
+        },
+        {
+            "clave": "oportunidad",
+            "titulo": "🟢 Oportunidad destacada",
+            "color": "#1a7f37",
+            "explica": "Demanda, servicios y conectividad por encima de la media con una "
+                       "oferta reglada comparativamente baja. Potencial infrautilizado.",
+            "filtro": lambda d: d[d["p_oportunidad"] > P_ALERTA],
+            "orden": "p_oportunidad",
+            "motivo": lambda f: (
+                f"Índice de oportunidad de {fmt(f['indice_oportunidad'], 1)} "
+                f"(percentil {fmt(f['p_oportunidad'], 0)}), con una saturación en el "
+                f"percentil {fmt(f['p_saturacion'], 0)}."
+            ),
+            "columnas": ["indice_oportunidad", "p_oportunidad", "saturacion_efectiva"],
+            "etiquetas": ["Índice oportunidad", "Percentil", "Plazas / 1.000 hab"],
+        },
+        {
+            "clave": "combinada",
+            "titulo": "🟠 Saturación alta con baja accesibilidad",
+            "color": "#bf8700",
+            "explica": "Presión turística elevada en un municipio mal comunicado. La "
+                       "combinación agrava la presión: la carga llega por carretera y los "
+                       "servicios de apoyo quedan lejos.",
+            "filtro": lambda d: d[(d["p_saturacion"] > P_ALERTA_COMBINADA)
+                                  & (d["p_distancia"] > P_ALERTA_COMBINADA)],
+            "orden": "p_saturacion",
+            "motivo": lambda f: (
+                f"Saturación en el percentil {fmt(f['p_saturacion'], 0)} y "
+                f"{fmt(f['dist_transporte_km'], 1)} km al nodo de transporte más cercano "
+                f"(percentil {fmt(f['p_distancia'], 0)} de lejanía)."
+            ),
+            "columnas": ["saturacion_efectiva", "dist_transporte_km", "p_saturacion"],
+            "etiquetas": ["Plazas / 1.000 hab", "Km al transporte", "Percentil saturación"],
+        },
+    ]
+
+    resumen = st.columns(3)
+    conteos = {}
+    for col, cat in zip(resumen, categorias):
+        n = len(cat["filtro"](ambito).dropna(subset=[cat["orden"]]))
+        conteos[cat["clave"]] = n
+        col.markdown(
+            f"<div class='tui-kpi' style='border-top-color:{cat['color']}'>"
+            f"<p class='valor' style='color:{cat['color']}'>{fmt(n)}</p>"
+            f"<p class='etiqueta'>{cat['titulo']}</p></div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<div class='tui-seccion'></div>", unsafe_allow_html=True)
+
+    for cat in categorias:
+        sub = cat["filtro"](ambito).dropna(subset=[cat["orden"]])
+        sub = sub.sort_values(cat["orden"], ascending=False)
+
+        st.markdown(
+            f"<div style='border-left:5px solid {cat['color']};background:#fff;"
+            f"border:1px solid {BORDE};border-radius:6px;padding:12px 16px;margin:14px 0 8px'>"
+            f"<div style='font-size:1.05rem;font-weight:700;color:{cat['color']}'>"
+            f"{cat['titulo']} · {len(sub):,} municipios</div>".replace(",", ".")
+            + f"<div style='color:{TEXTO_SUAVE};font-size:0.88rem;margin-top:4px'>"
+              f"{cat['explica']}</div></div>",
+            unsafe_allow_html=True,
+        )
+
+        if sub.empty:
+            st.info("Ningún municipio cumple esta condición en el ámbito seleccionado.")
+            continue
+
+        tabla = pd.DataFrame({
+            "Municipio": sub["nombre"],
+            "Provincia": sub["provincia"],
+            **{et: sub[c].round(2) for c, et in zip(cat["columnas"], cat["etiquetas"])},
+            "Población": sub["poblacion"],
+            "Base del dato": sub["base_saturacion"],
+            "Confianza": sub["cobertura_vut"].map(
+                lambda c: CONFIANZA.get(c, ("—", ""))[0]),
+            "Por qué salta": [cat["motivo"](f) for _, f in sub.iterrows()],
+        })
+        st.dataframe(tabla, hide_index=True, width="stretch",
+                     height=min(420, 40 + 35 * len(tabla)))
+
+
+# ---------------------------------------------------------------------------
+# Escenarios
+# ---------------------------------------------------------------------------
+
+def escenarios(df: pd.DataFrame) -> None:
+    st.markdown("### Simulador de escenarios")
+    st.caption(
+        "Recalcula la saturación de un municipio ante cambios en su oferta o su población, "
+        "y sitúa el resultado frente al resto de España."
+    )
+
+    st.markdown(
+        f"<div style='background:#fff8c5;border-left:5px solid #bf8700;"
+        f"padding:11px 15px;border-radius:6px;margin:8px 0 16px;font-size:0.9rem'>"
+        f"<b>Proyección orientativa, no una predicción.</b> El simulador aplica el cambio "
+        f"directamente sobre el indicador —plazas ajustadas por cada 1.000 habitantes "
+        f"ajustados— y no modela la demanda, la estacionalidad ni la respuesta del "
+        f"mercado. Responde a «cuánto cambiaría el indicador si esto ocurriera», no a "
+        f"«esto va a ocurrir».</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Sólo municipios con saturación calculada: sin ella no hay nada que proyectar.
+    disponibles = df[df["saturacion_efectiva"].notna()
+                     & (df["cobertura_vut"] != "no_comparable")].copy()
+    if disponibles.empty:
+        st.warning("No hay municipios con saturación calculada.")
+        return
+
+    izq, cen, der = st.columns([2, 1, 1])
+    with izq:
+        etiquetas = disponibles["nombre"] + " (" + disponibles["provincia"] + ")"
+        opciones = dict(zip(etiquetas, disponibles["codigo_ine"]))
+        eleccion = st.selectbox("Municipio", sorted(opciones), index=None,
+                                placeholder="Escribe un nombre…", key="mun_escenario")
+    with cen:
+        delta_oferta = st.slider("Cambio en la oferta (%)", -50, 100, 0, step=5,
+                                 key="delta_oferta",
+                                 help="Variación de las plazas turísticas del municipio.")
+    with der:
+        delta_poblacion = st.slider("Cambio en la población (%)", -30, 50, 0, step=5,
+                                    key="delta_poblacion",
+                                    help="Variación de la población residente.")
+
+    if not eleccion:
+        st.info("Elige un municipio para simular un escenario.")
+        return
+
+    fila = disponibles[disponibles["codigo_ine"] == opciones[eleccion]].iloc[0]
+
+    poblacion = float(fila["poblacion"])
+    saturacion_actual = float(fila["saturacion_efectiva"])
+    # Se reconstruyen las plazas desde el propio indicador, de modo que la base coincide
+    # con la que se está mostrando: total (VUT + hotelera) donde existe, sólo VUT si no.
+    plazas_actuales = saturacion_actual * poblacion / 1000
+
+    plazas_sim = plazas_actuales * (1 + delta_oferta / 100)
+    poblacion_sim = poblacion * (1 + delta_poblacion / 100)
+    saturacion_sim = (1000 * plazas_sim / poblacion_sim) if poblacion_sim > 0 else float("nan")
+
+    # Percentiles sobre el conjunto nacional con dato.
+    serie = disponibles["saturacion_efectiva"].dropna()
+    p_actual = 100 * float((serie < saturacion_actual).mean())
+    p_sim = 100 * float((serie < saturacion_sim).mean())
+    superados = int((serie < saturacion_sim).sum() - (serie < saturacion_actual).sum())
+
+    cortes = escala_quintiles(serie)
+
+    def tramo_de(valor: float) -> tuple[int, str]:
+        etiquetas_tramo = ["Margen amplio", "Margen", "Intermedio",
+                           "Presión notable", "Saturado"]
+        for i in range(len(cortes) - 1):
+            if valor <= cortes[i + 1]:
+                return i + 1, etiquetas_tramo[min(i, len(etiquetas_tramo) - 1)]
+        return len(cortes) - 1, etiquetas_tramo[-1]
+
+    q_actual, nombre_actual = tramo_de(saturacion_actual)
+    q_sim, nombre_sim = tramo_de(saturacion_sim)
+
+    st.markdown(f"#### {fila['nombre']} · {fila['provincia']}")
+    st.markdown(
+        f"Base del dato: **{fila['base_saturacion']}** · "
+        f"Confianza: {insignia_confianza(fila['cobertura_vut'])}",
+        unsafe_allow_html=True,
+    )
+    if fila["ccaa"] in NOTAS_COBERTURA:
+        st.caption(NOTAS_COBERTURA[fila["ccaa"]])
+
+    # Un porcentaje sobre cero sigue siendo cero. En municipios sin oferta registrada el
+    # simulador porcentual no puede decir nada, y conviene explicarlo antes de que el
+    # usuario mueva el deslizador y no vea reacción alguna.
+    if plazas_actuales <= 0:
+        st.info(
+            f"**{fila['nombre']} no tiene plazas turísticas registradas**, de modo que un "
+            "cambio porcentual de la oferta deja el indicador en cero. Aquí la pregunta "
+            "relevante no es cuánto crecer, sino qué supondría crear oferta desde cero; "
+            "el deslizador de población sí produce efecto en cuanto exista alguna plaza.",
+            icon="ℹ️",
+        )
+
+    colores_tramo = colores_por_tramo(VISTAS["Saturación"]["paleta"], len(cortes) - 1)
+    k1, k2, k3, k4 = st.columns(4)
+    k1.markdown(tarjeta_kpi(fmt(saturacion_actual, 1), "Saturación actual",
+                            f"Q{q_actual}/5 · {nombre_actual} · percentil {p_actual:.0f}"),
+                unsafe_allow_html=True)
+    estilo_sim = "acento" if saturacion_sim > saturacion_actual else "neutro"
+    k2.markdown(tarjeta_kpi(fmt(saturacion_sim, 1), "Saturación simulada",
+                            f"Q{q_sim}/5 · {nombre_sim} · percentil {p_sim:.0f}",
+                            estilo_sim), unsafe_allow_html=True)
+    k3.markdown(tarjeta_kpi(fmt(plazas_actuales, 0) + " → " + fmt(plazas_sim, 0),
+                            "Plazas turísticas",
+                            f"{delta_oferta:+d} %"), unsafe_allow_html=True)
+    k4.markdown(tarjeta_kpi(fmt(poblacion, 0) + " → " + fmt(poblacion_sim, 0),
+                            "Población", f"{delta_poblacion:+d} %", "neutro"),
+                unsafe_allow_html=True)
+
+    # --- Barra comparativa antes / después ---
+    tope = max(saturacion_actual, saturacion_sim, 1)
+    def barra(valor: float, etiqueta: str, tramo: int) -> str:
+        ancho = max(1.0, 100 * valor / tope)
+        color = colores_tramo[min(tramo - 1, len(colores_tramo) - 1)]
+        return (
+            f"<div style='margin:6px 0'>"
+            f"<div style='font-size:0.82rem;color:{TEXTO_SUAVE};margin-bottom:3px'>"
+            f"{etiqueta}</div>"
+            f"<div style='background:#E9EDF2;border-radius:4px;height:26px;position:relative'>"
+            f"<div style='width:{ancho:.1f}%;background:{color};height:26px;"
+            f"border-radius:4px'></div>"
+            f"<div style='position:absolute;top:3px;left:10px;font-weight:700;"
+            f"font-size:0.88rem;color:{TEXTO}'>{fmt(valor, 1)} plazas / 1.000 hab</div>"
+            f"</div></div>"
+        )
+
+    st.markdown(
+        f"<div style='background:#fff;border:1px solid {BORDE};border-radius:8px;"
+        f"padding:14px 18px;margin-top:10px'>"
+        + barra(saturacion_actual, "Situación actual", q_actual)
+        + barra(saturacion_sim, "Escenario simulado", q_sim)
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # --- Lectura del escenario ---
+    if delta_oferta == 0 and delta_poblacion == 0:
+        mensaje = ("Sin cambios aplicados. Mueve los deslizadores para simular una "
+                   "variación de la oferta o de la población.")
+        color = TUI_AZUL
+    else:
+        variacion = saturacion_sim - saturacion_actual
+        sentido = "aumentaría" if variacion > 0 else "se reduciría"
+        cambio_tramo = (
+            f"pasaría de «{nombre_actual}» a «{nombre_sim}»" if q_sim != q_actual
+            else f"se mantendría en «{nombre_actual}»"
+        )
+        comparacion = (
+            f" y adelantaría a {abs(superados):,} municipios en el ranking nacional"
+            .replace(",", ".") if superados > 0 else
+            f" y quedaría por detrás de {abs(superados):,} municipios que hoy tiene por "
+            f"debajo".replace(",", ".") if superados < 0 else ""
+        )
+        mensaje = (
+            f"Con un cambio de <b>{delta_oferta:+d} %</b> en la oferta y "
+            f"<b>{delta_poblacion:+d} %</b> en la población, la saturación de "
+            f"<b>{fila['nombre']}</b> {sentido} de {fmt(saturacion_actual, 1)} a "
+            f"<b>{fmt(saturacion_sim, 1)}</b> plazas por 1.000 habitantes. El municipio "
+            f"{cambio_tramo}{comparacion}."
+        )
+        color = TUI_ROJO if q_sim > q_actual else (
+            "#1a7f37" if q_sim < q_actual else TUI_AZUL)
+
+    st.markdown(
+        f"<div style='background:{color};color:#fff;padding:12px 16px;border-radius:6px;"
+        f"margin-top:12px;font-size:0.95rem;line-height:1.55'>{mensaje}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def ficha_municipio(df: pd.DataFrame) -> None:
     st.subheader("Ficha de municipio")
 
@@ -1216,11 +1539,21 @@ def panel_bienvenida() -> None:
     guia = [
         ("🗺️", "Vista principal", "El mapa nacional coloreado por el indicador que elijas."),
         ("📊", "Rankings", "Los municipios más saturados y los de mayor oportunidad."),
+        ("⚠️", "Alertas", "Municipios que cumplen condiciones de riesgo u oportunidad "
+         "destacable."),
+        ("🔮", "Escenarios", "Simula cambios en la oferta o la población y observa el "
+         "efecto sobre la saturación."),
         ("📋", "Ficha de municipio", "Busca un municipio y consulta su diagnóstico y su "
          "recomendación."),
         ("📍", "Detalle geográfico", "Zoom hasta los establecimientos individuales."),
     ]
-    for col, (icono, titulo, texto) in zip(st.columns(4), guia):
+    for col, (icono, titulo, texto) in zip(st.columns(3), guia[:3]):
+        col.markdown(
+            f"<div class='tui-tarjeta'><h4>{icono} {titulo}</h4><p>{texto}</p></div>",
+            unsafe_allow_html=True,
+        )
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    for col, (icono, titulo, texto) in zip(st.columns(3), guia[3:]):
         col.markdown(
             f"<div class='tui-tarjeta'><h4>{icono} {titulo}</h4><p>{texto}</p></div>",
             unsafe_allow_html=True,
@@ -1269,13 +1602,17 @@ k4.markdown(tarjeta_kpi(fmt(sin_dato), "Sin registro publicado",
 
 st.markdown("<div class='tui-seccion'></div>", unsafe_allow_html=True)
 
-tabs = st.tabs(["🗺️ Vista principal", "📊 Rankings", "📋 Ficha de municipio",
-                "📍 Detalle geográfico"])
+tabs = st.tabs(["🗺️ Vista principal", "📊 Rankings", "⚠️ Alertas", "🔮 Escenarios",
+                "📋 Ficha de municipio", "📍 Detalle geográfico"])
 with tabs[0]:
     vista_principal(datos, geometria)
 with tabs[1]:
     rankings(datos)
 with tabs[2]:
-    ficha_municipio(datos)
+    alertas(datos)
 with tabs[3]:
+    escenarios(datos)
+with tabs[4]:
+    ficha_municipio(datos)
+with tabs[5]:
     detalle_geografico(datos)
